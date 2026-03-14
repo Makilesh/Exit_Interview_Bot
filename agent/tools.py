@@ -94,18 +94,25 @@ def detect_hr_flags(response: str) -> dict:
     Returns:
         Dict with 'flag' (bool) and 'reason' (str or None) keys.
     """
-    prompt = f"""You are an HR compliance classifier. Analyze the following employee exit interview response for serious concerns.
+    prompt = f"""You are an HR compliance classifier. Your job is to detect responses that describe serious misconduct — not general dissatisfaction.
 
-Flag the response if it mentions any of:
-- Harassment
-- Discrimination
-- Abusive management
-- Unethical practices
-- Hostile work environment
+Flag the response ONLY if the employee explicitly describes one or more of:
+- Harassment (personal, sexual, or targeted)
+- Discrimination (race, gender, age, religion, disability, etc.)
+- Abusive or threatening behaviour by management
+- Unethical or illegal business practices
+- A hostile work environment driven by the above
+
+Do NOT flag based solely on:
+- Compensation complaints or pay dissatisfaction (even "pay gap" or "underpaid")
+- General frustration with management style or communication
+- Disagreements about promotion or career growth
+- Workload or work-life balance complaints
+- Vague feelings of being undervalued
 
 Return a JSON object with exactly these fields:
 - "flag": true or false
-- "reason": a brief explanation if flagged, or null if not flagged
+- "reason": a one-sentence explanation if flagged, or null if not flagged
 
 Return valid JSON only.
 

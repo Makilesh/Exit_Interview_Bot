@@ -87,10 +87,19 @@ Return a JSON object with exactly these fields:
 - "sentiment": one of "positive", "neutral", "negative"
 - "dominant_topics": a list from the same taxonomy as reason_tags — the main topics discussed in this response
 
-Rules:
-- Choose "ask_followup" if the answer is vague, shallow, emotionally charged, or hints at a deeper issue worth exploring.
-- Choose "next_question" if the answer is clear, detailed, and sufficient.
-- Return valid JSON only.
+Rules for choosing "next_question" (move on):
+- The employee clearly states a reason, even briefly (e.g. "compensation", "better opportunity", "management issues")
+- The answer is a direct yes or no to a yes/no question
+- The conversation already includes one or more follow-up exchanges on this topic — do not probe indefinitely
+- The answer is short but directly answers what was asked
+
+Rules for choosing "ask_followup" (probe deeper):
+- The answer is completely generic with no specifics (e.g. "it was fine", "I don't know")
+- The answer hints at a serious concern (management abuse, discrimination) but gives no detail
+- The answer is emotionally charged and unexplored
+
+Default toward "next_question" when in doubt. Only choose "ask_followup" if there is a clear, specific reason to dig deeper.
+Return valid JSON only.
 """
         try:
             decision_data = self._invoke_llm_json(prompt)
