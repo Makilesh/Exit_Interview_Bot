@@ -85,15 +85,16 @@ Return a JSON object with exactly these fields:
 - "reason": one of "vague_answer", "potential_management_issue", "emotionally_charged", "sufficient_answer", "detailed_response", "off_topic"
 - "reason_tags": a list from this taxonomy: ["compensation", "management", "workload", "career_growth", "culture", "work_life_balance"]
 - "sentiment": one of "positive", "neutral", "negative"
-- "dominant_topics": a list from the same taxonomy as reason_tags — the main topics discussed in this response
+- "dominant_topics": a list from the same taxonomy as reason_tags — topics the employee **explicitly mentioned or directly described** in this response. Do NOT infer or guess topics that were not mentioned.
 
 Rules for choosing "next_question" (move on):
 - The employee clearly states a reason, even briefly (e.g. "compensation", "better opportunity", "management issues")
 - The answer is a direct yes or no to a yes/no question
 - The conversation already includes one or more follow-up exchanges on this topic — do not probe indefinitely
-- The answer is short but directly answers what was asked
+- The answer is short but contains at least one concrete, specific detail
 
 Rules for choosing "ask_followup" (probe deeper):
+- The question is open-ended ("describe", "explain", "how would you", "what did you like", "why") AND the answer is a single word or generic phrase with no specifics (e.g. "good", "fine", "it was okay", "bad")
 - The answer is completely generic with no specifics (e.g. "it was fine", "I don't know")
 - The answer hints at a serious concern (management abuse, discrimination) but gives no detail
 - The answer is emotionally charged and unexplored

@@ -2,13 +2,9 @@
 Interviewer — manages the conversation with the employee using LangChain memory.
 """
 
-import os
-
 from dotenv import load_dotenv
 from langchain_core.chat_history import InMemoryChatMessageHistory
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
-
-from config import MODEL_NAME, FALLBACK_MODEL_NAME, TEMPERATURE
+from langchain_core.messages import HumanMessage, AIMessage
 
 
 # Pre-scripted demo responses covering varied sentiments and topics
@@ -65,45 +61,6 @@ class Interviewer:
         self.memory = InMemoryChatMessageHistory()
         self._demo_index = 0
 
-        # Set the system prompt
-        self._system_prompt = (
-            "You are a professional, empathetic HR interviewer conducting an exit interview. "
-            "Ask one question at a time and never volunteer opinions. Listen carefully to the "
-            "employee's responses and maintain a supportive, non-judgmental tone. Your goal is "
-            "to understand the employee's genuine reasons for leaving and their experience."
-        )
-
-    def _invoke_llm(self, messages: list) -> str:
-        """Invoke LLM with OpenAI first, Ollama fallback.
-
-        Args:
-            messages: List of LangChain message objects.
-
-        Returns:
-            The LLM response content string.
-        """
-        # Try OpenAI first
-        try:
-            from langchain_openai import ChatOpenAI
-
-            llm = ChatOpenAI(model=MODEL_NAME, temperature=TEMPERATURE)
-            result = llm.invoke(messages)
-            return result.content
-        except Exception:
-            pass
-
-        # Fallback to Ollama
-        from langchain_ollama import ChatOllama
-
-        ollama_base = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-        llm = ChatOllama(
-            model=FALLBACK_MODEL_NAME,
-            temperature=TEMPERATURE,
-            base_url=ollama_base,
-        )
-        result = llm.invoke(messages)
-        return result.content
-
     def ask(self, question: str) -> str:
         """Send a question to the employee and get their response.
 
@@ -128,27 +85,6 @@ class Interviewer:
         # Store the response in memory as a human message
         self.memory.add_user_message(response)
         return response
-
-    def get_response(self, employee_input: str) -> str:
-        """Process employee input through the LLM chain.
-
-        Uses the conversation memory and system prompt to generate an
-        appropriate interviewer response.
-
-        Args:
-            employee_input: The employee's latest input.
-
-        Returns:
-            The LLM-generated interviewer response.
-        """
-        messages = [SystemMessage(content=self._system_prompt)]
-        messages.extend(self.memory.messages)
-        messages.append(HumanMessage(content=employee_input))
-
-        try:
-            return self._invoke_llm(messages)
-        except Exception as e:
-            return f"Thank you for sharing that. Let's continue. (Error: {e})"
 
     def get_conversation_history(self) -> str:
         """Get the full conversation history as a formatted string.

@@ -123,13 +123,15 @@ def run_interview(demo_mode: bool = False) -> None:
                 # Run classification tool
                 try:
                     classification = classify_sentiment_and_reason.invoke(
-                        {"response": latest_response}
+                        {"response": latest_response, "question": current_entry.question}
                     )
                     if isinstance(classification, dict):
                         current_entry.reason_tags = list(
                             set(current_entry.reason_tags + classification.get("reason_tags", []))
                         )
-                        current_entry.sentiment = classification.get("sentiment", "neutral")
+                        # Only set sentiment from the initial answer, not follow-ups
+                        if not current_followups:
+                            current_entry.sentiment = classification.get("sentiment", "neutral")
                 except Exception as e:
                     console.print(f"[yellow]Classification warning: {e}[/yellow]")
 

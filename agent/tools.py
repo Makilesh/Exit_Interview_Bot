@@ -55,23 +55,28 @@ def _invoke_llm_json(prompt: str, temperature: float = 0) -> dict:
 
 
 @tool
-def classify_sentiment_and_reason(response: str) -> dict:
+def classify_sentiment_and_reason(response: str, question: str = "") -> dict:
     """Classify the sentiment and exit reason tags from an employee response.
 
-    Given an employee response, returns the sentiment (positive/neutral/negative)
-    and reason_tags from the fixed taxonomy: compensation, management, workload,
-    career_growth, culture, work_life_balance.
+    Given an employee response and the question that prompted it, returns the
+    sentiment (positive/neutral/negative) and reason_tags from the fixed taxonomy:
+    compensation, management, workload, career_growth, culture, work_life_balance.
 
     Args:
         response: The employee's response text.
+        question: The interview question that was asked (used for sentiment context).
 
     Returns:
         Dict with 'sentiment' and 'reason_tags' keys.
     """
+    question_context = f'Interview question: "{question}"\n' if question else ""
     prompt = f"""You are a classification assistant. Analyze the following employee exit interview response.
 
-Return a JSON object with exactly these fields:
+{question_context}Return a JSON object with exactly these fields:
 - "sentiment": one of "positive", "neutral", or "negative"
+  Important: determine sentiment relative to the question being asked. If the question asks
+  what the employee LIKED or what was POSITIVE, and the response names things positively,
+  that is "positive" sentiment even if the words are neutral nouns.
 - "reason_tags": a list of zero or more tags from this fixed taxonomy: ["compensation", "management", "workload", "career_growth", "culture", "work_life_balance"]
 
 Only include tags that are clearly relevant to the response. Return valid JSON only.
