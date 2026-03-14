@@ -207,7 +207,7 @@ def run_interview(demo_mode: bool = False) -> None:
                 session.detected_topics = decision_engine.topic_memory
                 session.conversation_length = state_mgr.total_turns
 
-                state_mgr.transition("summary_done")
+                state_mgr.transition("generate_summary")
 
             case InterviewState.GENERATE_SUMMARY:
                 console.print("\n[bold]Generating interview summary...[/bold]")

@@ -20,30 +20,44 @@ class DecisionEngine:
         load_dotenv()
         self.topic_memory: list[str] = []
 
-    def _get_llm(self):
-        """Create an LLM client, trying OpenAI first and falling back to Ollama.
+    def _invoke_llm_json(self, prompt: str) -> dict:
+        """Invoke LLM with OpenAI first, Ollama fallback, and parse JSON response.
+
+        Args:
+            prompt: The prompt to send.
 
         Returns:
-            A LangChain chat model instance.
+            Parsed JSON dict from the LLM response.
         """
+        # Try OpenAI first
         try:
             from langchain_openai import ChatOpenAI
 
-            return ChatOpenAI(
+            llm = ChatOpenAI(
                 model=MODEL_NAME,
                 temperature=TEMPERATURE,
                 model_kwargs={"response_format": {"type": "json_object"}},
             )
+            result = llm.invoke(prompt)
+            return json.loads(result.content)
         except Exception:
+            pass
+
+        # Fallback to Ollama
+        try:
             from langchain_ollama import ChatOllama
 
             ollama_base = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-            return ChatOllama(
+            llm = ChatOllama(
                 model=FALLBACK_MODEL_NAME,
                 temperature=TEMPERATURE,
                 base_url=ollama_base,
                 format="json",
             )
+            result = llm.invoke(prompt)
+            return json.loads(result.content)
+        except Exception:
+            raise
 
     def evaluate(self, response: str, question: str, conversation_history: str) -> tuple[dict, AgentDecisionEntry]:
         """Evaluate an employee response and return a structured decision.
@@ -78,10 +92,8 @@ Rules:
 - Choose "next_question" if the answer is clear, detailed, and sufficient.
 - Return valid JSON only.
 """
-        llm = self._get_llm()
         try:
-            result = llm.invoke(prompt)
-            decision_data = json.loads(result.content)
+            decision_data = self._invoke_llm_json(prompt)
         except Exception as e:
             # Fallback: if both LLM providers fail, default to next_question
             decision_data = {

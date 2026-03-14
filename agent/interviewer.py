@@ -5,7 +5,7 @@ Interviewer — manages the conversation with the employee using LangChain memor
 import os
 
 from dotenv import load_dotenv
-from langchain.memory import ConversationBufferMemory
+from langchain_core.chat_history import InMemoryChatMessageHistory
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
 from config import MODEL_NAME, FALLBACK_MODEL_NAME, TEMPERATURE
@@ -62,9 +62,8 @@ class Interviewer:
         """
         load_dotenv()
         self.demo_mode = demo_mode
-        self.memory = ConversationBufferMemory(return_messages=True)
+        self.memory = InMemoryChatMessageHistory()
         self._demo_index = 0
-        self._llm = self._create_llm()
 
         # Set the system prompt
         self._system_prompt = (
@@ -74,28 +73,36 @@ class Interviewer:
             "to understand the employee's genuine reasons for leaving and their experience."
         )
 
-    def _create_llm(self):
-        """Create an LLM client, trying OpenAI first and falling back to Ollama.
+    def _invoke_llm(self, messages: list) -> str:
+        """Invoke LLM with OpenAI first, Ollama fallback.
+
+        Args:
+            messages: List of LangChain message objects.
 
         Returns:
-            A LangChain chat model instance.
+            The LLM response content string.
         """
+        # Try OpenAI first
         try:
             from langchain_openai import ChatOpenAI
 
-            return ChatOpenAI(
-                model=MODEL_NAME,
-                temperature=TEMPERATURE,
-            )
+            llm = ChatOpenAI(model=MODEL_NAME, temperature=TEMPERATURE)
+            result = llm.invoke(messages)
+            return result.content
         except Exception:
-            from langchain_ollama import ChatOllama
+            pass
 
-            ollama_base = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-            return ChatOllama(
-                model=FALLBACK_MODEL_NAME,
-                temperature=TEMPERATURE,
-                base_url=ollama_base,
-            )
+        # Fallback to Ollama
+        from langchain_ollama import ChatOllama
+
+        ollama_base = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+        llm = ChatOllama(
+            model=FALLBACK_MODEL_NAME,
+            temperature=TEMPERATURE,
+            base_url=ollama_base,
+        )
+        result = llm.invoke(messages)
+        return result.content
 
     def ask(self, question: str) -> str:
         """Send a question to the employee and get their response.
@@ -110,7 +117,7 @@ class Interviewer:
             The employee's response string.
         """
         # Store the question in memory as an AI message
-        self.memory.chat_memory.add_ai_message(question)
+        self.memory.add_ai_message(question)
 
         if self.demo_mode:
             response = DEMO_RESPONSES[self._demo_index % len(DEMO_RESPONSES)]
@@ -119,7 +126,7 @@ class Interviewer:
             response = input(f"\n{question}\nYour response: ").strip()
 
         # Store the response in memory as a human message
-        self.memory.chat_memory.add_user_message(response)
+        self.memory.add_user_message(response)
         return response
 
     def get_response(self, employee_input: str) -> str:
@@ -135,12 +142,11 @@ class Interviewer:
             The LLM-generated interviewer response.
         """
         messages = [SystemMessage(content=self._system_prompt)]
-        messages.extend(self.memory.chat_memory.messages)
+        messages.extend(self.memory.messages)
         messages.append(HumanMessage(content=employee_input))
 
         try:
-            result = self._llm.invoke(messages)
-            return result.content
+            return self._invoke_llm(messages)
         except Exception as e:
             return f"Thank you for sharing that. Let's continue. (Error: {e})"
 
@@ -151,7 +157,7 @@ class Interviewer:
             A string representation of the conversation.
         """
         lines: list[str] = []
-        for msg in self.memory.chat_memory.messages:
+        for msg in self.memory.messages:
             if isinstance(msg, AIMessage):
                 lines.append(f"Interviewer: {msg.content}")
             elif isinstance(msg, HumanMessage):

@@ -18,30 +18,44 @@ class Summarizer:
         """Initialize the summarizer."""
         load_dotenv()
 
-    def _get_llm(self):
-        """Create an LLM client, trying OpenAI first and falling back to Ollama.
+    def _invoke_llm_json(self, prompt: str) -> dict:
+        """Invoke LLM with OpenAI first, Ollama fallback, and parse JSON response.
+
+        Args:
+            prompt: The prompt to send.
 
         Returns:
-            A LangChain chat model instance.
+            Parsed JSON dict from the LLM response.
         """
+        # Try OpenAI first
         try:
             from langchain_openai import ChatOpenAI
 
-            return ChatOpenAI(
+            llm = ChatOpenAI(
                 model=SUMMARY_MODEL,
                 temperature=TEMPERATURE,
                 model_kwargs={"response_format": {"type": "json_object"}},
             )
+            result = llm.invoke(prompt)
+            return json.loads(result.content)
         except Exception:
+            pass
+
+        # Fallback to Ollama
+        try:
             from langchain_ollama import ChatOllama
 
             ollama_base = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-            return ChatOllama(
+            llm = ChatOllama(
                 model=FALLBACK_MODEL_NAME,
                 temperature=TEMPERATURE,
                 base_url=ollama_base,
                 format="json",
             )
+            result = llm.invoke(prompt)
+            return json.loads(result.content)
+        except Exception:
+            raise
 
     def _format_transcript(self, session: SessionData) -> str:
         """Format the session responses as a readable Q&A transcript.
@@ -110,10 +124,8 @@ Return a JSON object with exactly these fields:
 
 Return valid JSON only.
 """
-        llm = self._get_llm()
         try:
-            result = llm.invoke(prompt)
-            data = json.loads(result.content)
+            data = self._invoke_llm_json(prompt)
         except Exception as e:
             raise RuntimeError(f"Summary generation failed: {e}")
 

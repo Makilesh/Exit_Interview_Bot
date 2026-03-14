@@ -3,46 +3,12 @@ LangChain tool functions for classification and HR flag detection.
 """
 
 import json
+import os
 
+from dotenv import load_dotenv
 from langchain_core.tools import tool
 
 from config import MODEL_NAME, FALLBACK_MODEL_NAME
-
-
-def _get_llm(temperature: float = 0):
-    """Create an LLM client, trying OpenAI first and falling back to Ollama.
-
-    Args:
-        temperature: Sampling temperature for the model.
-
-    Returns:
-        A LangChain chat model instance.
-    """
-    import os
-    from dotenv import load_dotenv
-
-    load_dotenv()
-
-    try:
-        from langchain_openai import ChatOpenAI
-
-        llm = ChatOpenAI(
-            model=MODEL_NAME,
-            temperature=temperature,
-            model_kwargs={"response_format": {"type": "json_object"}},
-        )
-        # Test with a minimal call to verify connectivity
-        return llm
-    except Exception:
-        from langchain_ollama import ChatOllama
-
-        ollama_base = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-        return ChatOllama(
-            model=FALLBACK_MODEL_NAME,
-            temperature=temperature,
-            base_url=ollama_base,
-            format="json",
-        )
 
 
 def _invoke_llm_json(prompt: str, temperature: float = 0) -> dict:
@@ -55,9 +21,6 @@ def _invoke_llm_json(prompt: str, temperature: float = 0) -> dict:
     Returns:
         Parsed JSON dict from the LLM response.
     """
-    import os
-    from dotenv import load_dotenv
-
     load_dotenv()
 
     # Try OpenAI first

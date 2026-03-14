@@ -29,7 +29,7 @@ _TRANSITIONS: dict[tuple[InterviewState, str], InterviewState] = {
     (InterviewState.ASK_FOLLOWUP, "followup_done"): InterviewState.EVALUATE_RESPONSE,
     (InterviewState.NEXT_QUESTION, "next_question"): InterviewState.ASK_QUESTION,
     (InterviewState.NEXT_QUESTION, "all_questions_done"): InterviewState.INTERVIEW_COMPLETE,
-    (InterviewState.INTERVIEW_COMPLETE, "summary_done"): InterviewState.GENERATE_SUMMARY,
+    (InterviewState.INTERVIEW_COMPLETE, "generate_summary"): InterviewState.GENERATE_SUMMARY,
 }
 
 
@@ -69,7 +69,6 @@ class StateManager:
         """
         all_questions_asked = self.current_question_index >= len(QUESTION_BANK)
         max_turns_reached = self.total_turns >= MAX_TURNS
-        max_followups_reached = self.current_followup_count >= MAX_FOLLOWUPS_PER_QUESTION
         return all_questions_asked or max_turns_reached
 
     def advance_question(self) -> None:

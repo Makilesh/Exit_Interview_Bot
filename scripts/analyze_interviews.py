@@ -5,7 +5,6 @@ No new LLM calls — uses only stored session data.
 """
 
 import sys
-import os
 from collections import Counter
 from pathlib import Path
 
