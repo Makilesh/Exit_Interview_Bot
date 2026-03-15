@@ -1,76 +1,299 @@
 # Agentic AI Exit Interview System
 
-An intelligent exit interview system powered by LangChain and OpenAI (with Ollama fallback). The system conducts structured exit interviews with employees, using an agentic decision engine to dynamically adapt follow-up questions based on response quality and content. It produces structured session data, human-readable transcripts, and Markdown summary reports.
+An intelligent, LLM-driven exit interview agent built with Python, LangChain, and OpenAI (with local Ollama fallback). The system conducts structured exit interviews, uses an agentic decision engine to dynamically adapt follow-up questions based on response quality, classifies sentiment and topics in real time, flags HR concerns, and produces a structured session record, a human-readable transcript, and a Markdown summary report.
+
+---
 
 ## Architecture
 
-### State Machine
-The interview follows a strict state machine flow: `INTERVIEW_START` -> `ASK_QUESTION` -> `EVALUATE_RESPONSE` -> (optionally `ASK_FOLLOWUP`) -> `NEXT_QUESTION` -> ... -> `INTERVIEW_COMPLETE` -> `GENERATE_SUMMARY`. The `StateManager` enforces valid transitions, tracks question progress, and manages termination conditions (all questions asked, max turns reached, or max follow-ups per question).
+The system is composed of five layers that interact in a tight loop: the state machine orchestrates flow, the decision engine drives agentic behaviour, the LangChain tools classify each response, the LLM utility handles provider routing, and the storage layer persists everything.
 
-### Decision Engine
-The `DecisionEngine` is the core of the agentic behavior. After each employee response, it makes an LLM call to classify the response and decide whether to ask a follow-up (for vague, emotionally charged, or incomplete answers) or move to the next question. It maintains a running topic memory of all discussed themes.
+### 1. State Machine (`agent/state_manager.py`)
 
-### Tools
-Two LangChain `@tool` functions handle specialized classification:
-- **`classify_sentiment_and_reason`** — Extracts sentiment (positive/neutral/negative) and reason tags from a fixed taxonomy (compensation, management, workload, career_growth, culture, work_life_balance).
-- **`detect_hr_flags`** — Flags responses mentioning harassment, discrimination, abusive management, unethical practices, or hostile work environments.
+The entire interview is governed by a seven-state machine:
 
-### Storage
-The `SessionStore` handles all persistence: JSON session data (validated through Pydantic models), plain-text transcripts, and Markdown summary reports. All output files are written to the `outputs/` directory.
+```
+INTERVIEW_START
+      │  "start"
+      ▼
+  ASK_QUESTION  ◄──────────────────────────────┐
+      │  "response_received"                    │
+      ▼                                         │
+EVALUATE_RESPONSE                               │
+      │                                         │
+      ├─ "followup_needed" ──► ASK_FOLLOWUP ───►┤  "followup_done"
+      │                                         │
+      └─ "next_question" ────► NEXT_QUESTION ───┘
+                                    │  "all_questions_done"
+                                    ▼
+                          INTERVIEW_COMPLETE
+                                    │  "generate_summary"
+                                    ▼
+                           GENERATE_SUMMARY
+```
+
+`StateManager` tracks the current state, the active question index, the per-question follow-up count, and the total turn count. `should_terminate()` returns `True` when any termination condition is met (all 6 questions asked, `MAX_TURNS` reached, or `MAX_FOLLOWUPS_PER_QUESTION` reached for the current question). `can_followup()` is a guard used by the decision engine to prevent over-probing.
+
+### 2. Decision Engine (`agent/decision_engine.py`)
+
+The `DecisionEngine` is the core of the agentic behaviour. After every employee response, it makes a focused LLM call whose only job is classification and decision-making — not conversation. It returns a structured JSON object:
+
+```json
+{
+  "decision": "ask_followup" | "next_question",
+  "reason": "vague_answer" | "emotionally_charged" | "potential_management_issue" | "sufficient_answer" | ...,
+  "reason_tags": ["management", "compensation", ...],
+  "sentiment": "positive" | "neutral" | "negative",
+  "dominant_topics": ["management", "career_growth", ...]
+}
+```
+
+Key decision rules baked into the prompt:
+
+- **Move on** when the answer contains a concrete specific detail, even briefly, or directly answers a yes/no question.
+- **Follow up** when the answer is generic ("it was fine", "I don't know"), emotionally charged without specifics, or hints at a serious concern without naming it.
+- **Emotion-word rule:** Strong adjectives (`hated`, `horrible`, `terrible`, `awful`, `worst`) paired with a person or role still require a specific incident or action — otherwise the response is treated as vague and triggers a follow-up.
+
+The engine accumulates `dominant_topics` across all turns into `topic_memory`, which maps directly to `detected_topics` in the session record.
+
+### 3. LangChain Tools (`agent/tools.py`)
+
+Two `@tool`-decorated functions run in parallel with the decision engine on every turn, providing independent signal:
+
+**`classify_sentiment_and_reason(response, question)`**
+Returns `sentiment` (positive / neutral / negative) and `reason_tags` from a fixed six-item taxonomy: `compensation`, `management`, `workload`, `career_growth`, `culture`, `work_life_balance`. Sentiment is evaluated relative to the question context (e.g. naming things you liked counts as positive). `"mixed"` is explicitly disallowed — dual-sentiment responses are resolved to the dominant tone. A post-processing guard in `main.py` enforces valid values.
+
+**`detect_hr_flags(response)`**
+Returns `{"flag": bool, "reason": str | None}`. Flags only explicit misconduct: harassment, discrimination, abusive management, unethical or illegal practices, or a hostile work environment driven by the above. General dissatisfaction, toxic-culture descriptions without specific incidents, and pay complaints are explicitly excluded.
+
+### 4. Per-Turn Execution Flow (`main.py` — `EVALUATE_RESPONSE`)
+
+On every employee response, all three classification calls run concurrently in a single `ThreadPoolExecutor(max_workers=3)`:
+
+```
+Employee Response
+        │
+        ├──────────────────────────────────────┐──────────────────┐
+        ▼                                      ▼                  ▼
+DecisionEngine.evaluate()      classify_sentiment_and_reason()   detect_hr_flags()
+  → decision + reason tags       → sentiment + reason_tags         → flag + reason
+        │                                      │                  │
+        └──────────────────────────────────────┘──────────────────┘
+                                        │
+                             Resolve actual decision
+                             (guard: can_followup?)
+                                        │
+                           Log to agent_decision_log
+                                        │
+                        Transition state machine
+```
+
+The decision engine's result drives the state transition; the tools' results enrich the `ResponseEntry`. Because all three calls are independent, wall-clock time per turn equals `max(T_decision, T_classify, T_hr)` rather than their sum.
+
+### 5. LLM Utility Layer (`utils/llm.py`)
+
+All LLM calls across the entire system go through one function: `invoke_llm_json(prompt, model, temperature)`. It provides three pillars:
+
+**Provider fallback** — tries `ChatOpenAI` first; on any failure, falls back to the local `ChatOllama` instance. The Ollama base URL defaults to `http://localhost:11434` and is overridable via `OLLAMA_BASE_URL` in `.env`.
+
+**Circuit breaker** — after 2 consecutive OpenAI failures, OpenAI is skipped entirely for 60 seconds. This eliminates repeated timeout or authentication overhead on every call when the primary provider is unavailable (e.g. when running fully locally). The breaker resets automatically after the cooldown or on the next successful call.
+
+**Client cache** — `ChatOpenAI` and `ChatOllama` instances are cached by `(model, temperature)` key. A session of ~25 LLM calls reuses 2-3 client instances instead of constructing fresh ones each time. Both mechanisms are thread-safe via `threading.Lock`.
+
+### 6. Conversation Memory (`agent/interviewer.py`)
+
+The `Interviewer` class manages per-session conversation history using `InMemoryChatMessageHistory` from `langchain_core`. It stores the full Q&A exchange as a sequence of human/AI messages. `get_conversation_history()` returns this as a formatted string passed to the decision engine for context-aware decisions.
+
+In **demo mode** (`--demo`), `ask()` returns pre-scripted responses covering varied sentiments including management concerns and compensation mentions. In **live mode**, it reads from stdin.
+
+### 7. Summarizer (`agent/summarizer.py`)
+
+After all questions are answered, the `Summarizer` formats the full Q&A transcript, the detected topics, and the agent decision log into a single prompt and makes one LLM call. The result is parsed into a `SummaryOutput` Pydantic model with these fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `primary_exit_reason` | str | The main reason the employee is leaving |
+| `sentiment` | str | Overall interview sentiment (positive / neutral / negative) |
+| `confidence_score` | float | 0.0–1.0, how clearly exit reasons emerged |
+| `top_positives` | list[str] | 1–3 things the employee valued |
+| `improvement_areas` | list[str] | 1–3 areas the company should address |
+| `flag_for_hr` | bool | Whether HR escalation is warranted |
+| `flag_reason` | str \| None | Explanation if flagged |
+
+### 8. Session Storage (`storage/session.py`)
+
+`SessionStore` writes three files per session, all in the `outputs/` directory with timestamped, chronologically sortable names:
+
+```
+outputs/
+  session_20260315_075457_c02fd9e0.json          ← full session data (Pydantic-validated)
+  session_20260315_075457_c02fd9e0_transcript.txt ← clean Q&A formatted text
+  session_20260315_075457_c02fd9e0_summary.md     ← structured Markdown report
+```
+
+`load()` and `list_sessions()` work by globbing for the session ID (the last segment before the extension), so they are resilient to the timestamp prefix.
+
+### 9. Aggregate Analysis (`scripts/analyze_interviews.py`)
+
+A standalone script that reads all saved sessions via `SessionStore` and prints a cross-session report — no LLM calls:
+
+- Most common exit reasons (ranked)
+- Sentiment distribution (positive / neutral / negative counts)
+- Most common improvement areas
+- Count of HR-flagged sessions
+
+---
+
+## Data Models (`storage/schema.py`)
+
+All data structures are Pydantic v2 models and serve as the single source of truth.
+
+```
+SessionData
+├── session_id: str
+├── timestamp: str
+├── conversation_length: int
+├── followup_count: int
+├── detected_topics: list[str]
+├── responses: list[ResponseEntry]
+│   ├── question: str
+│   ├── answer: str
+│   ├── sentiment: str
+│   ├── reason_tags: list[str]
+│   └── follow_ups: list[FollowUp]
+│       ├── question: str
+│       └── answer: str
+├── agent_decision_log: list[AgentDecisionEntry]
+│   ├── response: str
+│   ├── decision: str
+│   └── reason: str
+└── summary: SummaryOutput | None
+```
+
+---
+
+## Project Structure
+
+```
+exit-interview-agent/
+├── config.py                    # All tunable parameters (single source of truth)
+├── main.py                      # Entry point — state machine loop and orchestration
+├── agent/
+│   ├── __init__.py
+│   ├── decision_engine.py       # Agentic follow-up / next-question decision
+│   ├── interviewer.py           # Conversation memory, demo/live mode
+│   ├── questions.py             # Question bank (6 primary + follow-up variants)
+│   ├── state_manager.py         # 7-state interview state machine
+│   ├── summarizer.py            # End-of-session summary LLM call
+│   └── tools.py                 # @tool: classify_sentiment_and_reason, detect_hr_flags
+├── storage/
+│   ├── __init__.py
+│   ├── schema.py                # Pydantic v2 models — SessionData, SummaryOutput, etc.
+│   └── session.py               # JSON / transcript / Markdown export
+├── utils/
+│   └── llm.py                   # Shared invoke_llm_json + circuit breaker + client cache
+├── outputs/                     # Generated session files (gitignored)
+├── scripts/
+│   └── analyze_interviews.py    # Cross-session aggregate report
+├── requirements.txt
+└── README.md
+```
+
+---
+
+## Configuration (`config.py`)
+
+| Parameter | Default | Description |
+|---|---|---|
+| `MODEL_NAME` | `"gpt-4o"` | Primary OpenAI model for all calls |
+| `SUMMARY_MODEL` | `"gpt-4o"` | Model used for the final summary |
+| `FALLBACK_MODEL_NAME` | `"gpt-oss:20b"` | Ollama model used when OpenAI is unavailable |
+| `TEMPERATURE` | `0.3` | Sampling temperature (tools use `0` for determinism) |
+| `MAX_TURNS` | `15` | Hard cap on total conversation turns |
+| `MAX_FOLLOWUPS_PER_QUESTION` | `2` | Maximum follow-ups per primary question |
+| `OUTPUT_DIR` | `"outputs"` | Directory for all generated files |
+
+---
 
 ## Setup
 
-1. **Install dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
+**1. Install dependencies:**
+```bash
+pip install -r requirements.txt
+```
 
-2. **Configure API keys:**
-   Create a `.env` file in the project root:
-   ```env
-   OPENAI_API_KEY=your-openai-api-key-here
-   ```
+**2. Configure the OpenAI API key:**
 
-3. **Ollama fallback (optional):**
-   If you want fallback support when OpenAI is unavailable:
-   - Install and run [Ollama](https://ollama.ai/) locally
-   - Pull the fallback model: `ollama pull gpt-oss:20b`
-   - Optionally set `OLLAMA_BASE_URL` in `.env` (defaults to `http://localhost:11434`)
+Create a `.env` file in the project root:
+```env
+OPENAI_API_KEY=sk-your-key-here
+```
+
+**3. Ollama fallback (optional but recommended for offline use):**
+
+Install and run [Ollama](https://ollama.ai/) locally, then pull the fallback model:
+```bash
+ollama pull gpt-oss:20b
+```
+
+Optionally override the Ollama endpoint in `.env`:
+```env
+OLLAMA_BASE_URL=http://localhost:11434
+```
+
+When OpenAI is unavailable, the circuit breaker in `utils/llm.py` automatically routes all calls to Ollama after the first two failures.
+
+---
 
 ## How to Run
 
-### Live mode (interactive stdin input)
+**Live mode** — employee types responses interactively:
 ```bash
 python main.py
 ```
 
-### Demo mode (pre-scripted responses)
+**Demo mode** — pre-scripted responses, useful for testing:
 ```bash
 python main.py --demo
 ```
 
-### Multi-interview analysis
-After running one or more interviews:
+**Aggregate analysis** — cross-session report from all saved outputs:
 ```bash
 python scripts/analyze_interviews.py
 ```
 
-This reads all saved sessions and prints an aggregate report with exit reason rankings, sentiment distribution, common improvement areas, and HR flag counts.
+---
 
 ## Sample Output
 
-Below is a truncated example of a generated `session_<id>_summary.md`:
+### Terminal (rich summary table)
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    Interview Summary                     │
+├──────────────────────────┬──────────────────────────────┤
+│ Session ID               │ 0d50d177                     │
+│ Primary Exit Reason      │ Lack of learning and growth  │
+│ Sentiment                │ negative                     │
+│ Confidence Score         │ 0.85                         │
+│ Questions Asked          │ 6                            │
+│ Total Turns              │ 8                            │
+│ HR Flagged               │ No                           │
+└──────────────────────────┴──────────────────────────────┘
+```
+
+### `session_20260315_075457_0d50d177_summary.md`
 
 ```markdown
-# Exit Interview Summary — Session a1b2c3d4
+# Exit Interview Summary — Session 0d50d177
 
-**Date:** 2025-01-15T10:30:00+00:00
+**Date:** 2026-03-15T08:15:01.936273+00:00
 
 ---
 
 ## Primary Exit Reason
 
-Below-market compensation combined with poor management practices.
+Lack of learning and growth opportunities
 
 ## Overall Sentiment
 
@@ -82,52 +305,24 @@ negative
 
 ## Top Positives
 
-- Supportive team culture and camaraderie
-- Strong learning opportunities in the first year
-- Interesting and challenging work
+- Teammates and team culture
 
 ## Improvement Areas
 
-- Compensation alignment with market rates
-- Management training and accountability
-- Work-life balance policies
+- Management behaviour and accountability
+- Employee treatment and respect
+- Compensation alignment
 
 ## HR Flag Status
 
-**Flagged:** Yes
-**Reason:** Employee reported publicly abusive behavior by manager in team meetings.
+**Flagged:** No
 
 ---
 
 ## Detected Topics
 
-- compensation
+- career_growth
 - management
-- work_life_balance
 - culture
-```
-
-## Project Structure
-
-```
-exit-interview-agent/
-├── config.py                  # All tunable parameters
-├── main.py                    # Entry point and orchestration
-├── agent/
-│   ├── __init__.py
-│   ├── interviewer.py         # Conversation management with LLM
-│   ├── questions.py           # Question bank and follow-up variants
-│   ├── decision_engine.py     # Agentic decision-making
-│   ├── state_manager.py       # Interview state machine
-│   ├── summarizer.py          # Final summary generation
-│   └── tools.py               # LangChain classification tools
-├── storage/
-│   ├── __init__.py
-│   ├── session.py             # Session persistence and export
-│   └── schema.py              # Pydantic v2 data models
-├── outputs/                   # Generated interview data
-├── scripts/
-│   └── analyze_interviews.py  # Aggregate analysis script
-├── requirements.txt
-└── README.md
+- compensation
 ```
