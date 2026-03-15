@@ -254,6 +254,26 @@ def respond(session_id: str, req: RespondRequest):
         live.hr_flagged = True
         live.hr_flag_reason = hr_result.get("reason")
 
+    # Critical severity — stop interview immediately, do not ask another question
+    if isinstance(hr_result, dict) and hr_result.get("severity") == "critical":
+        if live.current_entry:
+            live.current_entry.follow_ups = live.current_followups
+            live.session.responses.append(live.current_entry)
+        live.session.detected_topics = live.decision_engine.topic_memory
+        live.session.conversation_length = state_mgr.total_turns
+        _store.save(live.session)
+        remove_session(session_id)
+        return RespondResponse(
+            next_question=None,
+            is_complete=True,
+            follow_up=False,
+            question_number=state_mgr.current_question_index + 1,
+            total_questions=len(QUESTION_BANK),
+            agent_decision={"decision": "crisis_escalation", "reason": "critical_hr_flag"},
+            detected_topics=[],
+            crisis_escalation=True,
+        )
+
     # Determine actual decision after guard
     decision = decision_data.get("decision", "next_question")
     reason = decision_data.get("reason", "unknown")

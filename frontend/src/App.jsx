@@ -2,9 +2,10 @@ import { useState, useEffect } from 'react'
 import ModeSelector from './components/ModeSelector.jsx'
 import ChatInterface from './components/ChatInterface.jsx'
 import SummaryPanel from './components/SummaryPanel.jsx'
+import CrisisPanel from './components/CrisisPanel.jsx'
 
 export default function App() {
-  const [view, setView] = useState('select')        // 'select' | 'interview' | 'summary'
+  const [view, setView] = useState('select')        // 'select' | 'interview' | 'summary' | 'crisis'
   const [dark, setDark] = useState(true)
 
   useEffect(() => {
@@ -29,10 +30,10 @@ export default function App() {
     setView('interview')
   }
 
-  function handleComplete(summaryData, topics) {
+  function handleComplete(summaryData, topics, isCrisis = false) {
     setSummary(summaryData)
-    setDetectedTopics(topics)
-    setView('summary')
+    setDetectedTopics(topics || [])
+    setView(isCrisis ? 'crisis' : 'summary')
   }
 
   function handleRestart() {
@@ -86,6 +87,9 @@ export default function App() {
             sessionId={sessionId}
             onRestart={handleRestart}
           />
+        )}
+        {view === 'crisis' && (
+          <CrisisPanel onRestart={handleRestart} />
         )}
       </main>
     </div>

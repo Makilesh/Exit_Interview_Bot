@@ -40,6 +40,7 @@ class RespondResponse(BaseModel):
     agent_decision: dict
     detected_topics: list[str]
     summary: SummaryOutput | None = None
+    crisis_escalation: bool = False
 
 
 class SessionListItem(BaseModel):

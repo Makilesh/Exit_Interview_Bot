@@ -66,6 +66,19 @@ export default function ChatInterface({ sessionId, firstQuestion, totalQuestions
         return updated
       })
 
+      if (data.crisis_escalation) {
+        setMessages(prev => [
+          ...prev,
+          {
+            role: 'ai',
+            text: 'I need to pause this interview. What you have shared is serious and will be handled with complete confidentiality. An HR representative will reach out to you directly. If you need immediate support, please contact your HR team or a trusted person right away.',
+            type: 'crisis',
+          },
+        ])
+        setTimeout(() => onComplete(null, [], true), 1500)
+        return
+      }
+
       if (data.is_complete) {
         // Show completion AI message, then hand off to summary
         setMessages(prev => [
@@ -132,7 +145,16 @@ export default function ChatInterface({ sessionId, firstQuestion, totalQuestions
                       Follow-up
                     </span>
                   )}
-                  <div className="px-4 py-3 rounded-2xl rounded-tl-sm bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100 text-sm leading-relaxed">
+                  {msg.type === 'crisis' && (
+                    <span className="block text-[10px] font-semibold uppercase tracking-wider text-red-500 dark:text-red-400 mb-1">
+                      Interview Paused
+                    </span>
+                  )}
+                  <div className={`px-4 py-3 rounded-2xl rounded-tl-sm text-sm leading-relaxed ${
+                    msg.type === 'crisis'
+                      ? 'bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 text-red-900 dark:text-red-200'
+                      : 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100'
+                  }`}>
                     {msg.text}
                   </div>
                 </div>
