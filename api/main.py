@@ -275,10 +275,12 @@ def respond(session_id: str, req: RespondRequest):
         )
 
     # Determine actual decision after guard
+    # Never follow up on HR-flagged responses — do not probe sensitive disclosures
+    hr_flagged_this_turn = isinstance(hr_result, dict) and hr_result.get("flag")
     decision = decision_data.get("decision", "next_question")
     reason = decision_data.get("reason", "unknown")
 
-    if decision == "ask_followup" and state_mgr.can_followup():
+    if decision == "ask_followup" and state_mgr.can_followup() and not hr_flagged_this_turn:
         actual_decision = "ask_followup"
     else:
         actual_decision = "next_question"

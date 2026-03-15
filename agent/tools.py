@@ -86,8 +86,11 @@ Do NOT flag based solely on:
 Return a JSON object with exactly these fields:
 - "flag": true or false
 - "severity": EXACTLY one of "critical", "standard", or null.
-  Use "critical" ONLY if the response explicitly describes sexual assault, rape, or physical violence/abuse (e.g. hitting, punching, grabbing).
-  Use "standard" for all other flagged content (harassment, discrimination, hostile environment, unethical practices).
+  Use "critical" if the response explicitly describes ANY of the following:
+    - Sexual harassment, sexual misconduct, sexual assault, or rape
+    - Physical violence or physical abuse (hitting, punching, grabbing, threatening physical harm)
+    - Any unwanted sexual contact, advances, or behaviour in the workplace
+  Use "standard" for other flagged content (non-sexual discrimination, hostile environment, unethical business practices, verbal abuse).
   Use null if "flag" is false.
 - "reason": a one-sentence explanation if flagged, or null if not flagged
 
