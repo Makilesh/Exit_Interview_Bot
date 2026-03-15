@@ -326,3 +326,78 @@ negative
 - culture
 - compensation
 ```
+
+---
+
+## Web Interface (Phase 1)
+
+The agent is also available as a full-stack web application — FastAPI backend + React frontend.
+
+### Project structure (web layer)
+
+```
+api/
+├── __init__.py
+├── main.py           ← FastAPI app + all routes
+├── models.py         ← Pydantic request/response schemas
+├── session_store.py  ← In-memory live session registry
+└── voice/
+    └── README.md     ← Phase 2 voice engine placeholder
+
+frontend/
+├── package.json      ← Vite + React + Tailwind
+├── vite.config.js    ← /api proxy → localhost:8000
+└── src/
+    ├── App.jsx        ← 3-view router (select → interview → summary)
+    ├── api.js         ← All fetch calls centralised
+    └── components/
+        ├── ModeSelector.jsx   ← 4-mode landing screen
+        ├── ChatInterface.jsx  ← Chat bubble interview UI
+        ├── ProgressBar.jsx    ← Q1/6 → Q6/6 progress
+        └── SummaryPanel.jsx   ← Full summary + downloads
+```
+
+### API routes
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/health` | Health check |
+| POST | `/api/session/start` | Create session, return first question |
+| POST | `/api/session/{id}/respond` | Submit answer, get next question or summary |
+| GET | `/api/session/{id}` | Full session data (JSON) |
+| GET | `/api/sessions` | List all completed sessions |
+| GET | `/api/session/{id}/download/json` | Download session JSON |
+| GET | `/api/session/{id}/download/transcript` | Download transcript |
+| GET | `/api/session/{id}/download/summary` | Download Markdown summary |
+
+### Running the web interface
+
+**1. Install Python dependencies (if not already done):**
+```bash
+pip install -r requirements.txt
+```
+
+**2. Start the backend:**
+```bash
+uvicorn api.main:app --reload --port 8000
+```
+
+**3. Start the frontend (separate terminal):**
+```bash
+cd frontend
+npm install
+npm run dev
+# Opens at http://localhost:5173
+```
+
+### Interview modes
+
+| Mode | Status | Description |
+|------|--------|-------------|
+| Text → Text | **Active** | Type questions, type answers |
+| Voice → Text | Phase 2 | Speak answers, read questions |
+| Text → Voice | Phase 2 | Type answers, hear questions spoken |
+| Voice → Voice | Phase 2 | Fully spoken interview |
+
+Voice modes are designed for Phase 2 (Whisper STT + Cartesia TTS via WebSocket).
+See `api/voice/README.md` for the planned architecture.
