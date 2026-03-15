@@ -1,11 +1,15 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import ModeSelector from './components/ModeSelector.jsx'
 import ChatInterface from './components/ChatInterface.jsx'
 import SummaryPanel from './components/SummaryPanel.jsx'
 
 export default function App() {
   const [view, setView] = useState('select')        // 'select' | 'interview' | 'summary'
-  const [dark, setDark] = useState(false)
+  const [dark, setDark] = useState(true)
+
+  useEffect(() => {
+    document.documentElement.classList.add('dark')
+  }, [])
   const [sessionId, setSessionId] = useState(null)
   const [firstQuestion, setFirstQuestion] = useState('')
   const [totalQuestions, setTotalQuestions] = useState(6)
@@ -46,7 +50,7 @@ export default function App() {
         <div className="max-w-4xl mx-auto px-4 h-14 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="text-cyan-600 dark:text-cyan-400 font-bold tracking-tight text-lg">
-              ExitIQ
+              AceNgage
             </span>
             <span className="text-xs text-gray-400 dark:text-gray-500 font-medium">
               AI Exit Interview System

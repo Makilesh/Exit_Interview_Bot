@@ -89,7 +89,7 @@ export default function ModeSelector({ onSelect }) {
             {/* Phase 2 badge */}
             {!mode.active && (
               <span className="absolute top-3 right-3 text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-700">
-                Phase 2
+                Soon
               </span>
             )}
 
@@ -120,7 +120,7 @@ export default function ModeSelector({ onSelect }) {
       {/* Phase 2 toast */}
       {phase2Toast && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 px-5 py-3 rounded-xl bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 text-sm shadow-xl transition-all">
-          Voice modes are coming soon. The voice engine is being integrated in Phase 2.
+          Voice modes are coming soon. Stay tuned!
         </div>
       )}
     </div>
