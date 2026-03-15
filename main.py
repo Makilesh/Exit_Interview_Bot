@@ -4,6 +4,7 @@ Orchestrates the full interview loop using a state machine.
 """
 
 import argparse
+import concurrent.futures
 import uuid
 from datetime import datetime, timezone
 
@@ -75,10 +76,6 @@ def run_interview(demo_mode: bool = False) -> None:
 
             case InterviewState.ASK_QUESTION:
                 idx = state_mgr.current_question_index
-                if idx >= len(QUESTION_BANK):
-                    state_mgr.transition("response_received")
-                    # We need to handle this — skip to EVALUATE which will route to NEXT_QUESTION
-                    continue
 
                 question = QUESTION_BANK[idx]
                 console.print(f"\n[bold cyan]Question {idx + 1}/{len(QUESTION_BANK)}:[/bold cyan]")
@@ -111,48 +108,63 @@ def run_interview(demo_mode: bool = False) -> None:
                 if current_followups:
                     latest_response = current_followups[-1].answer
 
-                # Run decision engine
+                # Run decision engine first — its output drives the state transition
                 conversation_history = interviewer.get_conversation_history()
                 decision_data, decision_entry = decision_engine.evaluate(
                     response=latest_response,
                     question=current_entry.question,
                     conversation_history=conversation_history,
                 )
-                session.agent_decision_log.append(decision_entry)
+                # NOTE: decision_entry is appended after the guard check below so the
+                # log records the action actually taken, not just the LLM's suggestion.
 
-                # Run classification tool
-                try:
-                    classification = classify_sentiment_and_reason.invoke(
-                        {"response": latest_response, "question": current_entry.question}
+                # Run classify and hr_flag concurrently — they are fully independent
+                classification: dict | None = None
+                hr_result: dict | None = None
+                with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+                    f_classify = executor.submit(
+                        classify_sentiment_and_reason.invoke,
+                        {"response": latest_response, "question": current_entry.question},
                     )
-                    if isinstance(classification, dict):
-                        current_entry.reason_tags = list(
-                            set(current_entry.reason_tags + classification.get("reason_tags", []))
-                        )
-                        # Only set sentiment from the initial answer, not follow-ups
-                        if not current_followups:
-                            current_entry.sentiment = classification.get("sentiment", "neutral")
-                except Exception as e:
-                    console.print(f"[yellow]Classification warning: {e}[/yellow]")
+                    f_hr = executor.submit(
+                        detect_hr_flags.invoke,
+                        {"response": latest_response},
+                    )
+                    try:
+                        classification = f_classify.result()
+                    except Exception as e:
+                        console.print(f"[yellow]Classification warning: {e}[/yellow]")
+                    try:
+                        hr_result = f_hr.result()
+                    except Exception as e:
+                        console.print(f"[yellow]HR flag detection warning: {e}[/yellow]")
 
-                # Run HR flag detection
-                try:
-                    hr_result = detect_hr_flags.invoke({"response": latest_response})
-                    if isinstance(hr_result, dict) and hr_result.get("flag"):
-                        hr_flagged = True
-                        hr_flag_reason = hr_result.get("reason")
-                        console.print("[bold red]⚠ HR flag detected[/bold red]")
-                except Exception as e:
-                    console.print(f"[yellow]HR flag detection warning: {e}[/yellow]")
+                if isinstance(classification, dict):
+                    current_entry.reason_tags = list(
+                        set(current_entry.reason_tags + classification.get("reason_tags", []))
+                    )
+                    # Only set sentiment from the initial answer, not follow-ups
+                    if not current_followups:
+                        current_entry.sentiment = classification.get("sentiment", "neutral")
+
+                if isinstance(hr_result, dict) and hr_result.get("flag"):
+                    hr_flagged = True
+                    hr_flag_reason = hr_result.get("reason")
+                    console.print("[bold red]⚠ HR flag detected[/bold red]")
 
                 decision = decision_data.get("decision", "next_question")
                 reason = decision_data.get("reason", "unknown")
 
-                # Decide next state — log after the guard so the log reflects
-                # the action actually taken, not just what the LLM returned.
-                # This prevents a spurious "ask_followup" log entry when the
-                # follow-up limit has already been reached.
+                # Determine actual decision after the can_followup() guard, then log it.
+                # This ensures the log reflects what actually happened, not just the LLM's suggestion.
                 if decision == "ask_followup" and state_mgr.can_followup():
+                    actual_decision = "ask_followup"
+                else:
+                    actual_decision = "next_question"
+                decision_entry.decision = actual_decision
+                session.agent_decision_log.append(decision_entry)
+
+                if actual_decision == "ask_followup":
                     console.print(
                         f"[dim]Agent decision: ask_followup (reason: {reason})[/dim]"
                     )

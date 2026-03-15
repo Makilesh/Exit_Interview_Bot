@@ -2,13 +2,9 @@
 Summarizer — generates a final summary of the exit interview.
 """
 
-import json
-import os
-
-from dotenv import load_dotenv
-
-from config import SUMMARY_MODEL, FALLBACK_MODEL_NAME, TEMPERATURE
+from config import SUMMARY_MODEL, TEMPERATURE
 from storage.schema import SessionData, SummaryOutput
+from utils.llm import invoke_llm_json
 
 
 class Summarizer:
@@ -16,46 +12,7 @@ class Summarizer:
 
     def __init__(self) -> None:
         """Initialize the summarizer."""
-        load_dotenv()
-
-    def _invoke_llm_json(self, prompt: str) -> dict:
-        """Invoke LLM with OpenAI first, Ollama fallback, and parse JSON response.
-
-        Args:
-            prompt: The prompt to send.
-
-        Returns:
-            Parsed JSON dict from the LLM response.
-        """
-        # Try OpenAI first
-        try:
-            from langchain_openai import ChatOpenAI
-
-            llm = ChatOpenAI(
-                model=SUMMARY_MODEL,
-                temperature=TEMPERATURE,
-                model_kwargs={"response_format": {"type": "json_object"}},
-            )
-            result = llm.invoke(prompt)
-            return json.loads(result.content)
-        except Exception:
-            pass
-
-        # Fallback to Ollama
-        try:
-            from langchain_ollama import ChatOllama
-
-            ollama_base = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-            llm = ChatOllama(
-                model=FALLBACK_MODEL_NAME,
-                temperature=TEMPERATURE,
-                base_url=ollama_base,
-                format="json",
-            )
-            result = llm.invoke(prompt)
-            return json.loads(result.content)
-        except Exception:
-            raise
+        pass
 
     def _format_transcript(self, session: SessionData) -> str:
         """Format the session responses as a readable Q&A transcript.
@@ -129,7 +86,7 @@ Return a JSON object with exactly these fields:
 Return valid JSON only.
 """
         try:
-            data = self._invoke_llm_json(prompt)
+            data = invoke_llm_json(prompt, model=SUMMARY_MODEL, temperature=TEMPERATURE)
         except Exception as e:
             raise RuntimeError(f"Summary generation failed: {e}")
 

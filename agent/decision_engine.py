@@ -3,13 +3,9 @@ Decision engine — the core of agentic behavior.
 Evaluates employee responses and decides whether to follow up or move on.
 """
 
-import json
-import os
-
-from dotenv import load_dotenv
-
-from config import MODEL_NAME, FALLBACK_MODEL_NAME, TEMPERATURE
+from config import MODEL_NAME, TEMPERATURE
 from storage.schema import AgentDecisionEntry
+from utils.llm import invoke_llm_json
 
 
 class DecisionEngine:
@@ -17,47 +13,7 @@ class DecisionEngine:
 
     def __init__(self) -> None:
         """Initialize the decision engine with an empty topic memory."""
-        load_dotenv()
         self.topic_memory: list[str] = []
-
-    def _invoke_llm_json(self, prompt: str) -> dict:
-        """Invoke LLM with OpenAI first, Ollama fallback, and parse JSON response.
-
-        Args:
-            prompt: The prompt to send.
-
-        Returns:
-            Parsed JSON dict from the LLM response.
-        """
-        # Try OpenAI first
-        try:
-            from langchain_openai import ChatOpenAI
-
-            llm = ChatOpenAI(
-                model=MODEL_NAME,
-                temperature=TEMPERATURE,
-                model_kwargs={"response_format": {"type": "json_object"}},
-            )
-            result = llm.invoke(prompt)
-            return json.loads(result.content)
-        except Exception:
-            pass
-
-        # Fallback to Ollama
-        try:
-            from langchain_ollama import ChatOllama
-
-            ollama_base = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-            llm = ChatOllama(
-                model=FALLBACK_MODEL_NAME,
-                temperature=TEMPERATURE,
-                base_url=ollama_base,
-                format="json",
-            )
-            result = llm.invoke(prompt)
-            return json.loads(result.content)
-        except Exception:
-            raise
 
     def evaluate(self, response: str, question: str, conversation_history: str) -> tuple[dict, AgentDecisionEntry]:
         """Evaluate an employee response and return a structured decision.
@@ -102,12 +58,16 @@ Rules for choosing "ask_followup" (probe deeper):
 - The answer is completely generic with no specifics (e.g. "it was fine", "I don't know")
 - The answer hints at a serious concern (management abuse, discrimination) but gives no detail
 - The answer is emotionally charged and unexplored
+- Emotion words alone (bad, good, fine, terrible, amazing, awful, great) without any noun,
+  person, event, or action described are NOT sufficient answers — treat them as vague.
+  Example: "bad and very bad" → ask_followup (no specifics given)
+  Example: "bad — my manager ignored all feedback" → next_question (specific detail present)
 
 Default toward "next_question" when in doubt. Only choose "ask_followup" if there is a clear, specific reason to dig deeper.
 Return valid JSON only.
 """
         try:
-            decision_data = self._invoke_llm_json(prompt)
+            decision_data = invoke_llm_json(prompt, model=MODEL_NAME, temperature=TEMPERATURE)
         except Exception as e:
             # Fallback: if both LLM providers fail, default to next_question
             decision_data = {

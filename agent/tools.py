@@ -2,56 +2,10 @@
 LangChain tool functions for classification and HR flag detection.
 """
 
-import json
-import os
-
-from dotenv import load_dotenv
 from langchain_core.tools import tool
 
-from config import MODEL_NAME, FALLBACK_MODEL_NAME
-
-
-def _invoke_llm_json(prompt: str, temperature: float = 0) -> dict:
-    """Invoke the LLM and parse the JSON response.
-
-    Args:
-        prompt: The prompt to send.
-        temperature: Sampling temperature.
-
-    Returns:
-        Parsed JSON dict from the LLM response.
-    """
-    load_dotenv()
-
-    # Try OpenAI first
-    try:
-        from langchain_openai import ChatOpenAI
-
-        llm = ChatOpenAI(
-            model=MODEL_NAME,
-            temperature=temperature,
-            model_kwargs={"response_format": {"type": "json_object"}},
-        )
-        response = llm.invoke(prompt)
-        return json.loads(response.content)
-    except Exception:
-        pass
-
-    # Fallback to Ollama
-    try:
-        from langchain_ollama import ChatOllama
-
-        ollama_base = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-        llm = ChatOllama(
-            model=FALLBACK_MODEL_NAME,
-            temperature=temperature,
-            base_url=ollama_base,
-            format="json",
-        )
-        response = llm.invoke(prompt)
-        return json.loads(response.content)
-    except Exception as e:
-        raise RuntimeError(f"Both OpenAI and Ollama LLM calls failed: {e}")
+from config import MODEL_NAME
+from utils.llm import invoke_llm_json
 
 
 @tool
@@ -85,7 +39,7 @@ Only include tags that are clearly relevant to the response. Return valid JSON o
 
 Employee response: "{response}"
 """
-    return _invoke_llm_json(prompt, temperature=0)
+    return invoke_llm_json(prompt, model=MODEL_NAME, temperature=0)
 
 
 @tool
@@ -125,4 +79,4 @@ Return valid JSON only.
 
 Employee response: "{response}"
 """
-    return _invoke_llm_json(prompt, temperature=0)
+    return invoke_llm_json(prompt, model=MODEL_NAME, temperature=0)
