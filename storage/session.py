@@ -102,8 +102,11 @@ class SessionStore:
         lines.append("")
         lines.append("## Top Positives")
         lines.append("")
-        for item in s.top_positives:
-            lines.append(f"- {item}")
+        if s.top_positives:
+            for item in s.top_positives:
+                lines.append(f"- {item}")
+        else:
+            lines.append("- No clear positives expressed during the interview")
         lines.append("")
         lines.append("## Improvement Areas")
         lines.append("")

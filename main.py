@@ -145,17 +145,22 @@ def run_interview(demo_mode: bool = False) -> None:
                 except Exception as e:
                     console.print(f"[yellow]HR flag detection warning: {e}[/yellow]")
 
-                # Log decision
                 decision = decision_data.get("decision", "next_question")
                 reason = decision_data.get("reason", "unknown")
-                console.print(
-                    f"[dim]Agent decision: {decision} (reason: {reason})[/dim]"
-                )
 
-                # Decide next state
+                # Decide next state — log after the guard so the log reflects
+                # the action actually taken, not just what the LLM returned.
+                # This prevents a spurious "ask_followup" log entry when the
+                # follow-up limit has already been reached.
                 if decision == "ask_followup" and state_mgr.can_followup():
+                    console.print(
+                        f"[dim]Agent decision: ask_followup (reason: {reason})[/dim]"
+                    )
                     state_mgr.transition("followup_needed")
                 else:
+                    console.print(
+                        f"[dim]Agent decision: next_question (reason: {reason})[/dim]"
+                    )
                     # Finalize current entry
                     current_entry.follow_ups = current_followups
                     session.responses.append(current_entry)

@@ -77,6 +77,8 @@ def classify_sentiment_and_reason(response: str, question: str = "") -> dict:
   Important: determine sentiment relative to the question being asked. If the question asks
   what the employee LIKED or what was POSITIVE, and the response names things positively,
   that is "positive" sentiment even if the words are neutral nouns.
+  Example: question = "What did you like most?" + response = "the people, the environment" → sentiment: "positive"
+  A list of nouns that are positive things (when asked about positives) is POSITIVE, not neutral.
 - "reason_tags": a list of zero or more tags from this fixed taxonomy: ["compensation", "management", "workload", "career_growth", "culture", "work_life_balance"]
 
 Only include tags that are clearly relevant to the response. Return valid JSON only.

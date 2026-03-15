@@ -116,6 +116,10 @@ AGENT DECISION LOG:
 Return a JSON object with exactly these fields:
 - "primary_exit_reason": a concise statement of the main reason the employee is leaving
 - "sentiment": the overall sentiment of the interview — one of "positive", "neutral", "negative"
+  Weight sentiment across the full conversation, not individual strongly-worded responses.
+  If most answers are neutral with only 1–2 negative responses, the overall sentiment should be "neutral".
+  Only use "negative" if the majority of responses express negativity.
+  Only use "positive" if most responses are clearly positive or encouraging.
 - "confidence_score": a float between 0.0 and 1.0 reflecting how clearly the exit reasons emerged from the conversation
 - "top_positives": a list of 1–3 things the employee viewed positively about the company
 - "improvement_areas": a list of 1–3 areas the company should improve based on this interview

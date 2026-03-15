@@ -86,6 +86,10 @@ Return a JSON object with exactly these fields:
 - "reason_tags": a list from this taxonomy: ["compensation", "management", "workload", "career_growth", "culture", "work_life_balance"]
 - "sentiment": one of "positive", "neutral", "negative"
 - "dominant_topics": a list from the same taxonomy as reason_tags — topics the employee **explicitly mentioned or directly described** in this response. Do NOT infer or guess topics that were not mentioned.
+  Counter-examples to avoid hallucinated tags:
+  - "I got a better offer" → ["compensation"], NOT ["career_growth"]
+  - "management was bad" → ["management"], NOT ["work_life_balance"]
+  - "the hours were long" → ["workload"], NOT ["work_life_balance"] unless balance was explicitly described
 
 Rules for choosing "next_question" (move on):
 - The employee clearly states a reason, even briefly (e.g. "compensation", "better opportunity", "management issues")
