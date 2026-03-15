@@ -27,13 +27,22 @@ def classify_sentiment_and_reason(response: str, question: str = "") -> dict:
     prompt = f"""You are a classification assistant. Analyze the following employee exit interview response.
 
 {question_context}Return a JSON object with exactly these fields:
-- "sentiment": one of "positive", "neutral", or "negative"
+- "sentiment": EXACTLY one of "positive", "neutral", or "negative" — no other value is allowed.
+  "mixed" is NOT a valid sentiment. If the response contains both positive and negative elements,
+  classify based on which tone is more emotionally intense or dominant. If the negative language
+  is stronger (e.g. "hated", "horrible"), classify as "negative". If roughly equal, use "neutral".
   Important: determine sentiment relative to the question being asked. If the question asks
   what the employee LIKED or what was POSITIVE, and the response names things positively,
   that is "positive" sentiment even if the words are neutral nouns.
   Example: question = "What did you like most?" + response = "the people, the environment" → sentiment: "positive"
   A list of nouns that are positive things (when asked about positives) is POSITIVE, not neutral.
 - "reason_tags": a list of zero or more tags from this fixed taxonomy: ["compensation", "management", "workload", "career_growth", "culture", "work_life_balance"]
+  Counter-examples to avoid hallucinated tags:
+  - "I got a better offer" → ["compensation"], NOT ["career_growth"]
+  - "management was bad" → ["management"], NOT ["work_life_balance"]
+  - "the hours were long" → ["workload"], NOT ["work_life_balance"] unless balance was explicitly described
+  - "there isn't much learning here" → ["career_growth"], NOT ["work_life_balance"]
+  - "no growth opportunities" → ["career_growth"], NOT ["work_life_balance"]
 
 Only include tags that are clearly relevant to the response. Return valid JSON only.
 

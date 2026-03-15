@@ -20,7 +20,7 @@ from agent.state_manager import StateManager, InterviewState
 from agent.summarizer import Summarizer
 from agent.questions import QUESTION_BANK, FOLLOWUP_VARIANTS
 from agent.tools import classify_sentiment_and_reason, detect_hr_flags
-from storage.schema import SessionData, ResponseEntry, FollowUp
+from storage.schema import SessionData, ResponseEntry, FollowUp, AgentDecisionEntry
 from storage.session import SessionStore
 
 console = Console()
@@ -108,20 +108,22 @@ def run_interview(demo_mode: bool = False) -> None:
                 if current_followups:
                     latest_response = current_followups[-1].answer
 
-                # Run decision engine first — its output drives the state transition
+                # Compute shared inputs once before submitting
                 conversation_history = interviewer.get_conversation_history()
-                decision_data, decision_entry = decision_engine.evaluate(
-                    response=latest_response,
-                    question=current_entry.question,
-                    conversation_history=conversation_history,
-                )
-                # NOTE: decision_entry is appended after the guard check below so the
-                # log records the action actually taken, not just the LLM's suggestion.
 
-                # Run classify and hr_flag concurrently — they are fully independent
+                # Run all three LLM calls concurrently — no data dependencies
                 classification: dict | None = None
                 hr_result: dict | None = None
-                with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+                decision_data: dict | None = None
+                decision_entry: AgentDecisionEntry | None = None
+
+                with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+                    f_decision = executor.submit(
+                        decision_engine.evaluate,
+                        response=latest_response,
+                        question=current_entry.question,
+                        conversation_history=conversation_history,
+                    )
                     f_classify = executor.submit(
                         classify_sentiment_and_reason.invoke,
                         {"response": latest_response, "question": current_entry.question},
@@ -130,6 +132,23 @@ def run_interview(demo_mode: bool = False) -> None:
                         detect_hr_flags.invoke,
                         {"response": latest_response},
                     )
+
+                    try:
+                        decision_data, decision_entry = f_decision.result()
+                    except Exception as e:
+                        console.print(f"[yellow]Decision engine warning: {e}[/yellow]")
+                        decision_data = {
+                            "decision": "next_question",
+                            "reason": "llm_error",
+                            "reason_tags": [],
+                            "sentiment": "neutral",
+                            "dominant_topics": [],
+                        }
+                        decision_entry = AgentDecisionEntry(
+                            response=latest_response,
+                            decision="next_question",
+                            reason="llm_error",
+                        )
                     try:
                         classification = f_classify.result()
                     except Exception as e:
@@ -139,13 +158,19 @@ def run_interview(demo_mode: bool = False) -> None:
                     except Exception as e:
                         console.print(f"[yellow]HR flag detection warning: {e}[/yellow]")
 
+                # NOTE: decision_entry is appended after the guard check below so the
+                # log records the action actually taken, not just the LLM's suggestion.
+
                 if isinstance(classification, dict):
                     current_entry.reason_tags = list(
                         set(current_entry.reason_tags + classification.get("reason_tags", []))
                     )
                     # Only set sentiment from the initial answer, not follow-ups
                     if not current_followups:
-                        current_entry.sentiment = classification.get("sentiment", "neutral")
+                        raw_sentiment = classification.get("sentiment", "neutral")
+                        if raw_sentiment not in ("positive", "neutral", "negative"):
+                            raw_sentiment = "negative"
+                        current_entry.sentiment = raw_sentiment
 
                 if isinstance(hr_result, dict) and hr_result.get("flag"):
                     hr_flagged = True

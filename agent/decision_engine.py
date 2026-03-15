@@ -58,10 +58,15 @@ Rules for choosing "ask_followup" (probe deeper):
 - The answer is completely generic with no specifics (e.g. "it was fine", "I don't know")
 - The answer hints at a serious concern (management abuse, discrimination) but gives no detail
 - The answer is emotionally charged and unexplored
-- Emotion words alone (bad, good, fine, terrible, amazing, awful, great) without any noun,
-  person, event, or action described are NOT sufficient answers — treat them as vague.
+- Emotion words or strong adjectives (bad, good, fine, terrible, amazing, awful, great, hated,
+  horrible, loved, wonderful, worst, best) about a topic are NOT sufficient unless the answer
+  also includes a specific incident, event, or concrete action (not just a person or role name).
+  A person/role reference plus an emotion is still vague — you need to know WHAT HAPPENED.
   Example: "bad and very bad" → ask_followup (no specifics given)
-  Example: "bad — my manager ignored all feedback" → next_question (specific detail present)
+  Example: "hated the manager" → ask_followup (emotion + person, but no incident or action)
+  Example: "horrible with manager and good with team" → ask_followup (no incidents described)
+  Example: "bad — my manager ignored all feedback" → next_question (specific action present)
+  Example: "manager was great, always gave timely feedback" → next_question (specific action)
 
 Default toward "next_question" when in doubt. Only choose "ask_followup" if there is a clear, specific reason to dig deeper.
 Return valid JSON only.
