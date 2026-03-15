@@ -64,7 +64,9 @@ Two `@tool`-decorated functions run in parallel with the decision engine on ever
 Returns `sentiment` (positive / neutral / negative) and `reason_tags` from a fixed six-item taxonomy: `compensation`, `management`, `workload`, `career_growth`, `culture`, `work_life_balance`. Sentiment is evaluated relative to the question context (e.g. naming things you liked counts as positive). `"mixed"` is explicitly disallowed — dual-sentiment responses are resolved to the dominant tone. A post-processing guard in `main.py` enforces valid values.
 
 **`detect_hr_flags(response)`**
-Returns `{"flag": bool, "reason": str | None}`. Flags only explicit misconduct: harassment, discrimination, abusive management, unethical or illegal practices, or a hostile work environment driven by the above. General dissatisfaction, toxic-culture descriptions without specific incidents, and pay complaints are explicitly excluded.
+Returns `{"flag": bool, "severity": "critical" | "standard" | null, "reason": str | None}`. Flags only explicit misconduct: harassment, discrimination, abusive management, unethical or illegal practices, or a hostile work environment driven by the above. General dissatisfaction, toxic-culture descriptions without specific incidents, and pay complaints are explicitly excluded.
+
+`severity` is set to `"critical"` for sexual harassment, sexual assault, rape, physical violence, or unwanted sexual contact — triggering immediate interview termination with a crisis escalation response. `"standard"` covers other flagged content (non-sexual discrimination, verbal abuse, unethical practices) — the interview continues to the next question but follow-ups are suppressed to avoid probing a sensitive topic.
 
 ### 4. Per-Turn Execution Flow (`main.py` — `EVALUATE_RESPONSE`)
 
@@ -76,12 +78,15 @@ Employee Response
         ├──────────────────────────────────────┐──────────────────┐
         ▼                                      ▼                  ▼
 DecisionEngine.evaluate()      classify_sentiment_and_reason()   detect_hr_flags()
-  → decision + reason tags       → sentiment + reason_tags         → flag + reason
+  → decision + reason tags       → sentiment + reason_tags         → flag + severity + reason
         │                                      │                  │
         └──────────────────────────────────────┘──────────────────┘
                                         │
+                             severity == "critical"?
+                             YES → stop interview → CrisisPanel
+                             NO  ↓
                              Resolve actual decision
-                             (guard: can_followup?)
+                             (guard: can_followup? HR flagged?)
                                         │
                            Log to agent_decision_log
                                         │
@@ -342,19 +347,20 @@ api/
 ├── models.py         ← Pydantic request/response schemas
 ├── session_store.py  ← In-memory live session registry
 └── voice/
-    └── README.md     ← Phase 2 voice engine placeholder
+    └── README.md     ← Voice engine placeholder (coming soon)
 
 frontend/
 ├── package.json      ← Vite + React + Tailwind
 ├── vite.config.js    ← /api proxy → localhost:8000
 └── src/
-    ├── App.jsx        ← 3-view router (select → interview → summary)
+    ├── App.jsx        ← 4-view router (select → interview → summary | crisis)
     ├── api.js         ← All fetch calls centralised
     └── components/
         ├── ModeSelector.jsx   ← 4-mode landing screen
         ├── ChatInterface.jsx  ← Chat bubble interview UI
         ├── ProgressBar.jsx    ← Q1/6 → Q6/6 progress
-        └── SummaryPanel.jsx   ← Full summary + downloads
+        ├── SummaryPanel.jsx   ← Full summary + downloads
+        └── CrisisPanel.jsx    ← Emergency escalation screen
 ```
 
 ### API routes
@@ -395,9 +401,9 @@ npm run dev
 | Mode | Status | Description |
 |------|--------|-------------|
 | Text → Text | **Active** | Type questions, type answers |
-| Voice → Text | Phase 2 | Speak answers, read questions |
-| Text → Voice | Phase 2 | Type answers, hear questions spoken |
-| Voice → Voice | Phase 2 | Fully spoken interview |
+| Voice → Text | Soon | Speak answers, read questions |
+| Text → Voice | Soon | Type answers, hear questions spoken |
+| Voice → Voice | Soon | Fully spoken interview |
 
-Voice modes are designed for Phase 2 (Whisper STT + Cartesia TTS via WebSocket).
+Voice modes are planned for a future release (Whisper STT + Cartesia TTS via WebSocket).
 See `api/voice/README.md` for the planned architecture.
