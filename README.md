@@ -127,13 +127,13 @@ After all questions are answered, the `Summarizer` formats the full Q&A transcri
 
 ### 8. Session Storage (`storage/session.py`)
 
-`SessionStore` writes three files per session, all in the `outputs/` directory with timestamped, chronologically sortable names:
+`SessionStore` writes files per session to the `outputs/` directory with timestamped, chronologically sortable names. Normal sessions produce three files; crisis-escalated sessions produce two (no LLM summary is generated):
 
 ```
 outputs/
   session_20260315_075457_c02fd9e0.json          ← full session data (Pydantic-validated)
   session_20260315_075457_c02fd9e0_transcript.txt ← clean Q&A formatted text
-  session_20260315_075457_c02fd9e0_summary.md     ← structured Markdown report
+  session_20260315_075457_c02fd9e0_summary.md     ← structured Markdown report (normal sessions only)
 ```
 
 `load()` and `list_sessions()` work by globbing for the session ID (the last segment before the extension), so they are resilient to the timestamp prefix.
