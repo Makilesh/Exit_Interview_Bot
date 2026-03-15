@@ -262,6 +262,7 @@ def respond(session_id: str, req: RespondRequest):
         live.session.detected_topics = live.decision_engine.topic_memory
         live.session.conversation_length = state_mgr.total_turns
         _store.save(live.session)
+        _store.export_transcript(live.session)  # preserve record for HR review
         remove_session(session_id)
         return RespondResponse(
             next_question=None,
