@@ -70,6 +70,9 @@ Do NOT flag based solely on:
 - Disagreements about promotion or career growth
 - Workload or work-life balance complaints
 - Vague feelings of being undervalued
+- General descriptions of "toxic culture" or "toxic people" without specific incidents of targeted harm
+- Feeling demotivated, disengaged, or undervalued
+- Vague references to a "bad environment" with no named misconduct
 
 Return a JSON object with exactly these fields:
 - "flag": true or false

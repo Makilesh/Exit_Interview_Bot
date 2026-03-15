@@ -3,8 +3,7 @@ Session persistence layer.
 Handles saving, loading, and exporting interview sessions.
 """
 
-import json
-import os
+from datetime import datetime
 from pathlib import Path
 
 from storage.schema import SessionData
@@ -23,13 +22,27 @@ class SessionStore:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
+    def _filename(self, session: SessionData, suffix: str) -> Path:
+        """Build a timestamped filename for session outputs.
+
+        Args:
+            session: The session whose timestamp and ID are used.
+            suffix: File suffix, e.g. '.json', '_transcript.txt', '_summary.md'.
+
+        Returns:
+            Path like outputs/session_20260315_075457_<id><suffix>
+        """
+        ts = datetime.fromisoformat(session.timestamp)
+        ts_str = ts.strftime("%Y%m%d_%H%M%S")
+        return self.output_dir / f"session_{ts_str}_{session.session_id}{suffix}"
+
     def save(self, session: SessionData) -> None:
         """Write session data to a JSON file.
 
         Args:
             session: Validated SessionData to persist.
         """
-        path = self.output_dir / f"session_{session.session_id}.json"
+        path = self._filename(session, ".json")
         path.write_text(session.model_dump_json(indent=2), encoding="utf-8")
 
     def load(self, session_id: str) -> SessionData:
@@ -41,8 +54,10 @@ class SessionStore:
         Returns:
             Parsed SessionData object.
         """
-        path = self.output_dir / f"session_{session_id}.json"
-        raw = path.read_text(encoding="utf-8")
+        matches = list(self.output_dir.glob(f"session_*_{session_id}.json"))
+        if not matches:
+            raise FileNotFoundError(f"No session file found for ID: {session_id}")
+        raw = matches[0].read_text(encoding="utf-8")
         return SessionData.model_validate_json(raw)
 
     def export_transcript(self, session: SessionData) -> None:
@@ -51,7 +66,7 @@ class SessionStore:
         Args:
             session: The session to export.
         """
-        path = self.output_dir / f"session_{session.session_id}_transcript.txt"
+        path = self._filename(session, "_transcript.txt")
         lines: list[str] = []
         lines.append(f"Exit Interview Transcript — Session {session.session_id}")
         lines.append(f"Date: {session.timestamp}")
@@ -80,7 +95,7 @@ class SessionStore:
             return
 
         s = session.summary
-        path = self.output_dir / f"session_{session.session_id}_summary.md"
+        path = self._filename(session, "_summary.md")
         lines: list[str] = []
         lines.append(f"# Exit Interview Summary — Session {session.session_id}")
         lines.append("")
@@ -137,7 +152,8 @@ class SessionStore:
         """
         ids: list[str] = []
         for f in self.output_dir.glob("session_*.json"):
-            name = f.stem  # e.g. "session_abc123"
-            session_id = name.replace("session_", "", 1)
+            # filename: session_20260315_075457_<session_id>.json
+            # session_id is always the last underscore-segment before .json
+            session_id = f.stem.split("_")[-1]
             ids.append(session_id)
         return ids
