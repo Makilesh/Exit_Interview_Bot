@@ -37,4 +37,6 @@ Thumbs.db
 src/__pycache__/
 src/*.pyc
 src/*$py.class
-frontend/node_modules/       
+frontend/node_modules/   
+
+prompts/

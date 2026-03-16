@@ -206,6 +206,9 @@ async def voice_interview(
                 await _send_error(websocket, "Could not transcribe audio")
                 continue
 
+            # Echo transcription to client immediately so UI can display it
+            await _send_json(websocket, {"type": "transcript", "text": answer})
+
             # Process the answer through the same logic as HTTP endpoint
             state_mgr = live.state_mgr
 

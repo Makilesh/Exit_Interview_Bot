@@ -54,6 +54,7 @@ export function downloadFile(sessionId, type) {
  * @param {Function} handlers.onQuestion - Called when server sends a question
  * @param {Function} handlers.onComplete - Called when interview is complete
  * @param {Function} handlers.onCrisis - Called when crisis escalation is triggered
+ * @param {Function} handlers.onTranscript - Called when server sends back the STT transcript
  * @param {Function} handlers.onError - Called on error
  * @param {Function} handlers.onClose - Called when connection closes
  * @returns {Object} - { sendAudio, sendText, close }
@@ -75,6 +76,9 @@ export function createVoiceSocket(sessionId, mode, handlers) {
       switch (msg.type) {
         case 'question':
           handlers.onQuestion?.(msg)
+          break
+        case 'transcript':
+          handlers.onTranscript?.(msg)
           break
         case 'complete':
           handlers.onComplete?.(msg)

@@ -138,6 +138,19 @@ export default function VoiceInterface({ sessionId, firstQuestion, totalQuestion
         setIsProcessing(false)
       },
 
+      onTranscript: (msg) => {
+        // Replace the transcribing placeholder with the real transcribed text
+        setMessages(prev => {
+          const idx = prev.slice().reverse().findIndex(m => m.transcribing)
+          if (idx === -1) return [...prev, { role: 'user', text: msg.text, isVoice: true }]
+          const realIdx = prev.length - 1 - idx
+          const updated = [...prev]
+          updated[realIdx] = { role: 'user', text: msg.text, isVoice: true }
+          return updated
+        })
+        setIsProcessing(true)
+      },
+
       onConnect: () => {
         setConnected(true)
       },
@@ -215,8 +228,7 @@ export default function VoiceInterface({ sessionId, firstQuestion, totalQuestion
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
 
         if (audioBlob.size > 0) {
-          setIsProcessing(true)
-          setMessages(prev => [...prev, { role: 'user', text: '(Voice message)', isVoice: true }])
+          setMessages(prev => [...prev, { role: 'user', text: '', isVoice: true, transcribing: true }])
           wsRef.current?.sendAudio(audioBlob)
         }
       }
@@ -302,7 +314,10 @@ export default function VoiceInterface({ sessionId, firstQuestion, totalQuestion
               <div className="flex flex-col items-end">
                 <div className="max-w-[85%] px-4 py-3 rounded-2xl rounded-tr-sm bg-cyan-600 text-white text-sm leading-relaxed">
                   {msg.isVoice && <span className="mr-1">🎤</span>}
-                  {msg.text}
+                  {msg.transcribing
+                    ? <span className="italic opacity-75">Transcribing...</span>
+                    : msg.text
+                  }
                 </div>
               </div>
             )}
