@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import ModeSelector from './components/ModeSelector.jsx'
 import ChatInterface from './components/ChatInterface.jsx'
+import VoiceInterface from './components/VoiceInterface.jsx'
 import SummaryPanel from './components/SummaryPanel.jsx'
 import CrisisPanel from './components/CrisisPanel.jsx'
 
@@ -14,6 +15,7 @@ export default function App() {
   const [sessionId, setSessionId] = useState(null)
   const [firstQuestion, setFirstQuestion] = useState('')
   const [totalQuestions, setTotalQuestions] = useState(6)
+  const [mode, setMode] = useState('text_text')
   const [summary, setSummary] = useState(null)
   const [detectedTopics, setDetectedTopics] = useState([])
 
@@ -23,10 +25,11 @@ export default function App() {
   }
 
   function handleModeSelect(data) {
-    // data = { session_id, first_question, question_number, total_questions }
+    // data = { session_id, first_question, question_number, total_questions, mode }
     setSessionId(data.session_id)
     setFirstQuestion(data.first_question)
     setTotalQuestions(data.total_questions)
+    setMode(data.mode || 'text_text')
     setView('interview')
   }
 
@@ -36,9 +39,17 @@ export default function App() {
     setView(isCrisis ? 'crisis' : 'summary')
   }
 
+  function handleCancel() {
+    setSessionId(null)
+    setFirstQuestion('')
+    setMode('text_text')
+    setView('select')
+  }
+
   function handleRestart() {
     setSessionId(null)
     setFirstQuestion('')
+    setMode('text_text')
     setSummary(null)
     setDetectedTopics([])
     setView('select')
@@ -72,12 +83,22 @@ export default function App() {
         {view === 'select' && (
           <ModeSelector onSelect={handleModeSelect} />
         )}
-        {view === 'interview' && (
+        {view === 'interview' && mode === 'text_text' && (
           <ChatInterface
             sessionId={sessionId}
             firstQuestion={firstQuestion}
             totalQuestions={totalQuestions}
             onComplete={handleComplete}
+          />
+        )}
+        {view === 'interview' && mode !== 'text_text' && (
+          <VoiceInterface
+            sessionId={sessionId}
+            firstQuestion={firstQuestion}
+            totalQuestions={totalQuestions}
+            mode={mode}
+            onComplete={handleComplete}
+            onCancel={handleCancel}
           />
         )}
         {view === 'summary' && (

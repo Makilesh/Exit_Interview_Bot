@@ -41,6 +41,7 @@ from api.session_store import (
     get_session,
     remove_session,
 )
+from api.voice import voice_router, voice_available
 
 load_dotenv()
 
@@ -56,6 +57,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include voice WebSocket router
+app.include_router(voice_router)
 
 _store = SessionStore(output_dir=OUTPUT_DIR)
 
@@ -140,17 +144,18 @@ def _evaluate_response(live: LiveSession, latest_response: str) -> dict:
 
 @app.get("/api/health")
 def health_check():
-    """Simple health check."""
-    return {"status": "ok"}
+    """Health check with voice capability status."""
+    return {"status": "ok", "voice": voice_available()}
 
 
 @app.post("/api/session/start", response_model=SessionStartResponse)
 def start_session(req: SessionStartRequest):
     """Create a new interview session and return the first question."""
-    if req.mode != "text_text":
+    valid_modes = ("text_text", "voice_text", "text_voice", "voice_voice")
+    if req.mode not in valid_modes:
         raise HTTPException(
             status_code=400,
-            detail="Only text_text mode is supported in Phase 1.",
+            detail=f"Invalid mode. Must be one of: {', '.join(valid_modes)}",
         )
 
     session_id = str(uuid.uuid4())[:8]
