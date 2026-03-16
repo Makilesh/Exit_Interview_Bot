@@ -107,6 +107,13 @@ export default function VoiceInterface({ sessionId, firstQuestion, totalQuestion
         }
       },
 
+      onTranscription: (msg) => {
+        // Replace the pending "Transcribing..." bubble with actual text
+        setMessages(prev => prev.map(m =>
+          m.pending ? { ...m, text: msg.text, pending: false } : m
+        ))
+      },
+
       onComplete: (msg) => {
         setIsProcessing(false)
         setMessages(prev => [
@@ -216,7 +223,7 @@ export default function VoiceInterface({ sessionId, firstQuestion, totalQuestion
 
         if (audioBlob.size > 0) {
           setIsProcessing(true)
-          setMessages(prev => [...prev, { role: 'user', text: '(Voice message)', isVoice: true }])
+          setMessages(prev => [...prev, { role: 'user', text: 'Transcribing...', isVoice: true, pending: true }])
           wsRef.current?.sendAudio(audioBlob)
         }
       }
@@ -300,7 +307,11 @@ export default function VoiceInterface({ sessionId, firstQuestion, totalQuestion
 
             {msg.role === 'user' && (
               <div className="flex flex-col items-end">
-                <div className="max-w-[85%] px-4 py-3 rounded-2xl rounded-tr-sm bg-cyan-600 text-white text-sm leading-relaxed">
+                <div className={`max-w-[85%] px-4 py-3 rounded-2xl rounded-tr-sm text-sm leading-relaxed transition-all duration-300 ${
+                  msg.pending
+                    ? 'bg-cyan-600/50 text-white/70 italic'
+                    : 'bg-cyan-600 text-white'
+                }`}>
                   {msg.isVoice && <span className="mr-1">🎤</span>}
                   {msg.text}
                 </div>

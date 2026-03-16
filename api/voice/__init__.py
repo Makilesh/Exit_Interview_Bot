@@ -165,6 +165,8 @@ async def voice_interview(
             # Receive message (can be text JSON or binary audio)
             message = await websocket.receive()
 
+            is_voice_input = False
+
             if "text" in message:
                 # JSON message
                 try:
@@ -177,6 +179,7 @@ async def voice_interview(
                         answer = await asyncio.get_running_loop().run_in_executor(
                             None, stt_engine.transcribe, audio_bytes, True
                         )
+                        is_voice_input = True
                     elif msg_type == "text":
                         # Direct text input (for text_voice mode)
                         answer = data.get("data", "").strip()
@@ -198,6 +201,7 @@ async def voice_interview(
                 answer = await asyncio.get_running_loop().run_in_executor(
                     None, stt_engine.transcribe, audio_bytes, True
                 )
+                is_voice_input = True
 
             else:
                 continue  # Skip unexpected message types
@@ -205,6 +209,10 @@ async def voice_interview(
             if not answer:
                 await _send_error(websocket, "Could not transcribe audio")
                 continue
+
+            # Send transcription back immediately so the UI can display it
+            if is_voice_input:
+                await _send_json(websocket, {"type": "transcription", "text": answer})
 
             # Process the answer through the same logic as HTTP endpoint
             state_mgr = live.state_mgr
