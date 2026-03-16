@@ -7,3 +7,8 @@ python-dotenv>=1.0.0
 rich>=13.0.0
 fastapi>=0.110.0
 uvicorn[standard]>=0.27.0
+
+# Voice engine (Phase 3)
+faster-whisper>=1.0.0
+pyttsx3>=2.90
+pydub>=0.25.0

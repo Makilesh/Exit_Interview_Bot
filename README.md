@@ -16,7 +16,7 @@ The entire interview is governed by a seven-state machine:
 INTERVIEW_START
       │  "start"
       ▼
-  ASK_QUESTION  ◄──────────────────────────────┐
+  ASK_QUESTION  ◄───────────────────────────────┐
       │  "response_received"                    │
       ▼                                         │
 EVALUATE_RESPONSE                               │
