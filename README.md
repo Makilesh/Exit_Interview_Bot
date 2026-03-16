@@ -210,8 +210,8 @@ exit-interview-agent/
 
 | Parameter | Default | Description |
 |---|---|---|
-| `MODEL_NAME` | `"gpt-4o"` | Primary OpenAI model for all calls |
-| `SUMMARY_MODEL` | `"gpt-4o"` | Model used for the final summary |
+| `MODEL_NAME` | `"gpt-4.1"` | Primary OpenAI model for all calls |
+| `SUMMARY_MODEL` | `"gpt-4.1"` | Model used for the final summary |
 | `FALLBACK_MODEL_NAME` | `"gpt-oss:20b"` | Ollama model used when OpenAI is unavailable |
 | `TEMPERATURE` | `0.3` | Sampling temperature (tools use `0` for determinism) |
 | `MAX_TURNS` | `15` | Hard cap on total conversation turns |
