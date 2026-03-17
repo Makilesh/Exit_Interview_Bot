@@ -1,92 +1,110 @@
 """
-Simplified Whisper STT for turn-based exit interviews.
+STT for exit interview voice input.
 
-Uses faster-whisper for efficient transcription. No real-time streaming,
-VAD complexity, or barge-in detection — interview is turn-based.
+Engine: faster-whisper (the same Whisper backend that RealtimeSTT wraps internally).
+
+For batch transcription of complete audio blobs sent over WebSocket, faster-whisper
+is used directly.  RealtimeSTT's AudioToTextRecorder is designed for CONTINUOUS
+microphone input and would block indefinitely when given a complete pre-recorded
+blob — it expects an open-ended audio stream, not a single finished recording.
+
+Model selection and VAD parameters mirror voice_engine_MVP/src/stt_handler.py:
+  - model: tiny.en / small.en / base.en  (env WHISPER_MODEL, default base.en)
+  - device: cuda → float16 | cpu → int8   (ctypes DLL check per MVP)
+  - VAD filter: silero_vad, threshold=0.38
+  - beam_size=1                            (fastest, same as MVP)
+
+Audio pipeline: Browser WebM/Opus → 16 kHz mono WAV (pydub/ffmpeg) → temp file → transcribe.
 """
 
 import io
 import logging
 import os
-import tempfile
-from pathlib import Path
+import wave
 
 logger = logging.getLogger(__name__)
 
-# Lazy-loaded globals
+# ── Lazy-loaded singleton ─────────────────────────────────────────────────────
 _model = None
 _model_loaded = False
-_load_error = None
+_load_error: str | None = None
 
 
+# ── CUDA detection (ctypes approach from voice_engine_MVP/src/stt_handler.py) ─
+def _cuda_available() -> bool:
+    """
+    Check CUDA runtime availability using ctypes DLL probing.
+    This mirrors voice_engine_MVP's _cuda_runtime_available() which avoids
+    importing torch (side-effects, slow) just to do a device check.
+    """
+    import ctypes
+    for dll in ["cudart64_12.dll", "cudart64_120.dll", "cudart64_115.dll", "cublas64_12.dll"]:
+        try:
+            ctypes.WinDLL(dll)
+            return True
+        except OSError:
+            continue
+    # Secondary check via torch if it is already imported
+    try:
+        import torch
+        return torch.cuda.is_available()
+    except ImportError:
+        pass
+    return False
+
+
+# ── Engine initialisation ─────────────────────────────────────────────────────
 def _get_model():
-    """Lazy-load the Whisper model on first use."""
+    """Lazy-load WhisperModel; returns the model or None on failure."""
     global _model, _model_loaded, _load_error
 
     if _model_loaded:
         return _model
 
+    # Model name → matches MVP's {"fast": "tiny.en", "balanced": "small.en", "accurate": "base.en"}
     model_name = os.getenv("WHISPER_MODEL", "base.en")
+
+    cuda_ok = _cuda_available()
+    device = "cuda" if cuda_ok else "cpu"
+    compute_type = "float16" if cuda_ok else "int8"
 
     try:
         from faster_whisper import WhisperModel
 
-        # Auto-detect CUDA, fallback to CPU with int8
-        try:
-            import torch
-            if torch.cuda.is_available():
-                device = "cuda"
-                compute_type = "float16"
-                logger.info(f"Loading Whisper model '{model_name}' on CUDA")
-            else:
-                device = "cpu"
-                compute_type = "int8"
-                logger.info(f"Loading Whisper model '{model_name}' on CPU (int8)")
-        except ImportError:
-            device = "cpu"
-            compute_type = "int8"
-            logger.info(f"Loading Whisper model '{model_name}' on CPU (int8, torch not available)")
-
+        logger.info(
+            f"Loading faster-whisper '{model_name}' on {device} ({compute_type})"
+        )
         _model = WhisperModel(model_name, device=device, compute_type=compute_type)
         _model_loaded = True
-        logger.info(f"Whisper model '{model_name}' loaded successfully")
+        logger.info(f"faster-whisper '{model_name}' ready")
         return _model
 
     except Exception as e:
         _load_error = str(e)
-        _model_loaded = True  # Mark as attempted
-        logger.error(f"Failed to load Whisper model: {e}")
+        _model_loaded = True
+        logger.error(f"Failed to load faster-whisper: {e}")
         return None
 
 
-def stt_available() -> bool:
-    """Check if STT is available (model loaded successfully)."""
-    _get_model()
-    return _model is not None
-
-
+# ── Audio conversion ──────────────────────────────────────────────────────────
 def _convert_to_wav(audio_bytes: bytes) -> bytes:
     """
     Convert browser audio (WebM/Opus, OGG, MP4) to 16 kHz mono WAV.
-
-    Tries WebM format first (Chrome/Edge MediaRecorder default), then lets
-    pydub auto-detect so Safari (MP4/AAC) and Firefox (OGG) also work.
-    ffmpeg must be on PATH.
+    Requires ffmpeg on PATH (via pydub).
     """
     try:
         from pydub import AudioSegment
 
-        # Try WebM explicitly first, then auto-detect
         try:
             audio = AudioSegment.from_file(io.BytesIO(audio_bytes), format="webm")
         except Exception:
             audio = AudioSegment.from_file(io.BytesIO(audio_bytes))
 
         audio = audio.set_channels(1).set_frame_rate(16000)
-        wav_buffer = io.BytesIO()
-        audio.export(wav_buffer, format="wav")
-        wav_buffer.seek(0)
-        return wav_buffer.read()
+        buf = io.BytesIO()
+        audio.export(buf, format="wav")
+        buf.seek(0)
+        return buf.read()
 
     except Exception as e:
         err = str(e).lower()
@@ -98,20 +116,26 @@ def _convert_to_wav(audio_bytes: bytes) -> bytes:
         raise ValueError(f"Failed to convert audio: {e}")
 
 
+# ── Public API ────────────────────────────────────────────────────────────────
+def stt_available() -> bool:
+    """Return True if faster-whisper loaded successfully."""
+    return _get_model() is not None
+
+
 def transcribe(audio_bytes: bytes, needs_conversion: bool = True) -> str:
     """
     Transcribe audio bytes to text.
 
     Args:
-        audio_bytes: Raw audio bytes from browser (WebM/Opus/OGG/MP4) or WAV.
-        needs_conversion: If True, convert to WAV first via pydub (requires ffmpeg).
+        audio_bytes: Raw audio from browser (WebM/Opus/OGG/MP4) or WAV.
+        needs_conversion: If True, convert to 16 kHz mono WAV first.
 
     Returns:
-        Transcribed text string (empty string if nothing detected).
+        Transcribed text (empty string if nothing detected).
 
     Raises:
-        RuntimeError: If STT is not available.
-        ValueError: If audio conversion or transcription fails.
+        RuntimeError: STT not available.
+        ValueError:   Audio conversion or transcription failed.
     """
     model = _get_model()
     if model is None:
@@ -120,22 +144,27 @@ def transcribe(audio_bytes: bytes, needs_conversion: bool = True) -> str:
     try:
         wav_bytes = _convert_to_wav(audio_bytes) if needs_conversion else audio_bytes
 
+        import tempfile
+        from pathlib import Path
+
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
             f.write(wav_bytes)
-            temp_path = f.name
+            tmp = f.name
 
         try:
+            # VAD parameters mirror MVP's silero_sensitivity=0.38
             segments, _info = model.transcribe(
-                temp_path,
-                beam_size=1,
+                tmp,
+                beam_size=1,                    # fastest, same as MVP
                 language="en",
                 vad_filter=True,
+                vad_parameters={"threshold": 0.38},
             )
-            text = " ".join(seg.text.strip() for seg in segments)
-            logger.debug(f"Transcribed {len(audio_bytes)} bytes -> '{text[:60]}'")
-            return text.strip()
+            text = " ".join(s.text.strip() for s in segments).strip()
+            logger.debug(f"Transcribed {len(audio_bytes)} bytes → '{text[:80]}'")
+            return text
         finally:
-            Path(temp_path).unlink(missing_ok=True)
+            Path(tmp).unlink(missing_ok=True)
 
     except Exception as e:
         logger.error(f"Transcription failed: {e}")
@@ -143,21 +172,18 @@ def transcribe(audio_bytes: bytes, needs_conversion: bool = True) -> str:
 
 
 class InterviewSTT:
-    """
-    Wrapper class for STT operations in the interview context.
-
-    Provides a simple interface for the WebSocket handler.
-    """
+    """Wrapper used by the WebSocket voice handler."""
 
     def __init__(self):
-        """Initialize STT (triggers lazy model loading)."""
         self._available = stt_available()
 
     @property
     def available(self) -> bool:
-        """Check if STT is ready."""
         return self._available
 
+    @property
+    def engine_type(self) -> str | None:
+        return "faster_whisper" if self._available else None
+
     def transcribe(self, audio_bytes: bytes, needs_conversion: bool = True) -> str:
-        """Transcribe audio to text. See module-level transcribe() for details."""
         return transcribe(audio_bytes, needs_conversion)
