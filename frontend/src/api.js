@@ -47,7 +47,7 @@ export function downloadFile(sessionId, type) {
 }
 
 /**
- * Creates a WebSocket connection for voice interview sessions.
+ * Creates a WebSocket connection for voice interview sessions with auto-reconnect.
  * @param {string} sessionId
  * @param {string} mode - 'voice_text' | 'text_voice' | 'voice_voice'
  * @param {Object} handlers - Event handlers
@@ -57,55 +57,158 @@ export function downloadFile(sessionId, type) {
  * @param {Function} handlers.onTranscript - Called when server sends back the STT transcript
  * @param {Function} handlers.onError - Called on error
  * @param {Function} handlers.onClose - Called when connection closes
- * @returns {Object} - { sendAudio, sendText, close }
+ * @param {Function} handlers.onConnect - Called when connection establishes
+ * @param {Function} handlers.onStateChange - Called when connection state changes
+ * @returns {Object} - { sendAudio, sendText, close, reconnect, getState }
  */
 export function createVoiceSocket(sessionId, mode, handlers) {
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const host = window.location.host
-  const ws = new WebSocket(`${protocol}//${host}/api/voice/ws/${sessionId}?mode=${mode}`)
+  let ws = null
+  let reconnectTimer = null
+  let heartbeatTimer = null
+  let connectionTimeout = null
+  let reconnectAttempts = 0
+  let manualClose = false
+  let hasReceivedFirstMessage = false
 
-  ws.onopen = () => {
-    console.log('Voice WebSocket connected')
-    handlers.onConnect?.()
-  }
+  const MAX_RECONNECT_ATTEMPTS = 5
+  const RECONNECT_DELAY_MS = 2000
+  const CONNECTION_TIMEOUT_MS = 10000
+  const HEARTBEAT_INTERVAL_MS = 30000
 
-  ws.onmessage = (event) => {
-    try {
-      const msg = JSON.parse(event.data)
+  // Connection states: 'connecting' | 'connected' | 'reconnecting' | 'disconnected' | 'failed'
+  let connectionState = 'connecting'
 
-      switch (msg.type) {
-        case 'question':
-          handlers.onQuestion?.(msg)
-          break
-        case 'transcript':
-          handlers.onTranscript?.(msg)
-          break
-        case 'complete':
-          handlers.onComplete?.(msg)
-          break
-        case 'crisis':
-          handlers.onCrisis?.(msg)
-          break
-        case 'error':
-          handlers.onError?.(new Error(msg.message))
-          break
-        default:
-          console.warn('Unknown message type:', msg.type)
-      }
-    } catch (e) {
-      console.error('Failed to parse WebSocket message:', e)
+  const updateState = (newState) => {
+    if (connectionState !== newState) {
+      connectionState = newState
+      console.log(`[Voice WS] State: ${newState}`)
+      handlers.onStateChange?.({ state: newState, attempts: reconnectAttempts })
     }
   }
 
-  ws.onerror = (event) => {
-    console.error('Voice WebSocket error:', event)
-    handlers.onError?.(new Error('WebSocket connection error'))
+  const clearTimers = () => {
+    if (reconnectTimer) clearTimeout(reconnectTimer)
+    if (heartbeatTimer) clearInterval(heartbeatTimer)
+    if (connectionTimeout) clearTimeout(connectionTimeout)
   }
 
-  ws.onclose = (event) => {
-    console.log('Voice WebSocket closed:', event.code, event.reason)
-    handlers.onClose?.(event)
+  const startHeartbeat = () => {
+    heartbeatTimer = setInterval(() => {
+      if (ws?.readyState === WebSocket.OPEN) {
+        try {
+          ws.send(JSON.stringify({ type: 'ping' }))
+        } catch (e) {
+          console.warn('[Voice WS] Heartbeat ping failed:', e)
+        }
+      }
+    }, HEARTBEAT_INTERVAL_MS)
   }
+
+  const connect = () => {
+    clearTimers()
+
+    // Set connection timeout
+    connectionTimeout = setTimeout(() => {
+      if (ws?.readyState !== WebSocket.OPEN && !hasReceivedFirstMessage) {
+        console.error('[Voice WS] Connection timeout')
+        ws?.close()
+        updateState('failed')
+        handlers.onError?.(new Error('Connection timeout - please check if the backend server is running on port 8000'))
+      }
+    }, CONNECTION_TIMEOUT_MS)
+
+    // Connect directly to backend (bypasses Vite proxy which can have WS issues)
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const wsHost = import.meta.env.PROD ? window.location.host : 'localhost:8000'
+    const wsUrl = `${protocol}//${wsHost}/api/voice/ws/${sessionId}?mode=${mode}`
+
+    console.log(`[Voice WS] Connecting to ${wsUrl}`)
+    ws = new WebSocket(wsUrl)
+
+    ws.onopen = () => {
+      clearTimeout(connectionTimeout)
+      reconnectAttempts = 0
+      updateState('connected')
+      console.log('[Voice WS] Connected successfully')
+      handlers.onConnect?.()
+      startHeartbeat()
+    }
+
+    ws.onmessage = (event) => {
+      if (!hasReceivedFirstMessage) {
+        hasReceivedFirstMessage = true
+        clearTimeout(connectionTimeout)
+      }
+
+      try {
+        const msg = JSON.parse(event.data)
+
+        // Handle heartbeat pong
+        if (msg.type === 'pong') {
+          return
+        }
+
+        switch (msg.type) {
+          case 'question':
+            handlers.onQuestion?.(msg)
+            break
+          case 'transcript':
+            handlers.onTranscript?.(msg)
+            break
+          case 'complete':
+            handlers.onComplete?.(msg)
+            break
+          case 'crisis':
+            handlers.onCrisis?.(msg)
+            break
+          case 'error':
+            handlers.onError?.(new Error(msg.message))
+            break
+          default:
+            console.warn('[Voice WS] Unknown message type:', msg.type)
+        }
+      } catch (e) {
+        console.error('[Voice WS] Failed to parse message:', e)
+      }
+    }
+
+    ws.onerror = (event) => {
+      console.error('[Voice WS] Error:', event)
+      const errorMsg = connectionState === 'connecting'
+        ? 'Failed to connect - verify backend is running on port 8000'
+        : 'Connection error occurred'
+      handlers.onError?.(new Error(errorMsg))
+    }
+
+    ws.onclose = (event) => {
+      clearTimers()
+      console.log(`[Voice WS] Closed: code=${event.code}, clean=${event.wasClean}, reason="${event.reason}"`)
+
+      if (manualClose) {
+        updateState('disconnected')
+        handlers.onClose?.(event)
+        return
+      }
+
+      // Auto-reconnect on unexpected close
+      if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+        reconnectAttempts++
+        updateState('reconnecting')
+        console.log(`[Voice WS] Reconnecting (attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`)
+
+        reconnectTimer = setTimeout(() => {
+          connect()
+        }, RECONNECT_DELAY_MS)
+      } else {
+        updateState('failed')
+        handlers.onError?.(new Error(`Unable to connect after ${MAX_RECONNECT_ATTEMPTS} attempts. Please refresh the page.`))
+        handlers.onClose?.(event)
+      }
+    }
+  }
+
+  // Initial connection
+  connect()
 
   return {
     /**
@@ -113,8 +216,11 @@ export function createVoiceSocket(sessionId, mode, handlers) {
      * @param {Blob} blob - Audio blob (WebM/Opus)
      */
     sendAudio: (blob) => {
-      if (ws.readyState === WebSocket.OPEN) {
+      if (ws?.readyState === WebSocket.OPEN) {
         ws.send(blob)
+      } else {
+        console.warn('[Voice WS] Cannot send audio - not connected')
+        handlers.onError?.(new Error('Not connected - please wait for reconnection'))
       }
     },
 
@@ -123,22 +229,46 @@ export function createVoiceSocket(sessionId, mode, handlers) {
      * @param {string} text
      */
     sendText: (text) => {
-      if (ws.readyState === WebSocket.OPEN) {
+      if (ws?.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'text', data: text }))
+      } else {
+        console.warn('[Voice WS] Cannot send text - not connected')
+        handlers.onError?.(new Error('Not connected - please wait for reconnection'))
       }
     },
 
     /**
-     * Close the WebSocket connection.
+     * Manually close the WebSocket connection (no auto-reconnect).
      */
     close: () => {
-      ws.close()
+      manualClose = true
+      clearTimers()
+      ws?.close()
+    },
+
+    /**
+     * Manually trigger reconnection.
+     */
+    reconnect: () => {
+      if (connectionState === 'failed' || connectionState === 'disconnected') {
+        reconnectAttempts = 0
+        hasReceivedFirstMessage = false
+        manualClose = false
+        updateState('connecting')
+        connect()
+      }
     },
 
     /**
      * Check if WebSocket is connected.
      * @returns {boolean}
      */
-    isConnected: () => ws.readyState === WebSocket.OPEN,
+    isConnected: () => ws?.readyState === WebSocket.OPEN,
+
+    /**
+     * Get current connection state.
+     * @returns {string}
+     */
+    getState: () => connectionState,
   }
 }

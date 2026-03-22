@@ -171,6 +171,11 @@ async def voice_interview(
                     data = json.loads(message["text"])
                     msg_type = data.get("type", "")
 
+                    # Handle heartbeat ping
+                    if msg_type == "ping":
+                        await _send_json(websocket, {"type": "pong"})
+                        continue
+
                     if msg_type == "audio":
                         # Base64-encoded audio
                         audio_bytes = base64.b64decode(data.get("data", ""))

@@ -70,7 +70,8 @@ export default function VoiceInterface({ sessionId, firstQuestion, totalQuestion
   const [isProcessing, setIsProcessing] = useState(false)
   const [error, setError] = useState(null)
   const [questionNumber, setQuestionNumber] = useState(1)
-  const [connected, setConnected] = useState(false)
+  const [connectionState, setConnectionState] = useState('connecting') // 'connecting' | 'connected' | 'reconnecting' | 'disconnected' | 'failed'
+  const [reconnectAttempts, setReconnectAttempts] = useState(0)
 
   const bottomRef = useRef(null)
   const wsRef = useRef(null)
@@ -91,6 +92,7 @@ export default function VoiceInterface({ sessionId, firstQuestion, totalQuestion
     const ws = createVoiceSocket(sessionId, mode, {
       onQuestion: (msg) => {
         setIsProcessing(false)
+        setError(null) // Clear any previous errors
 
         // Update question number
         setQuestionNumber(msg.question_number)
@@ -149,16 +151,33 @@ export default function VoiceInterface({ sessionId, firstQuestion, totalQuestion
           return updated
         })
         setIsProcessing(true)
+        setError(null) // Clear errors on successful transcript
       },
 
       onConnect: () => {
-        setConnected(true)
+        console.log('[VoiceInterface] WebSocket connected')
+        setError(null) // Clear errors on successful connection
       },
 
-      onClose: () => {
-        setConnected(false)
-        // If we closed before any question arrived, it's a fatal setup error
-        // — surface it so the user can recover by changing mode
+      onStateChange: ({ state, attempts }) => {
+        setConnectionState(state)
+        setReconnectAttempts(attempts)
+
+        if (state === 'reconnecting') {
+          setError(`Connection lost. Reconnecting (attempt ${attempts}/5)...`)
+        } else if (state === 'failed') {
+          setError('Connection failed after multiple attempts. Please check your internet connection.')
+        } else if (state === 'connected' && attempts > 0) {
+          setError(null) // Clear reconnection error on success
+        }
+      },
+
+      onClose: (event) => {
+        console.log('[VoiceInterface] WebSocket closed')
+        // Only show error if we haven't received any messages yet (initial connection failure)
+        if (messages.length === 0) {
+          setError('Unable to connect to voice server. Please verify the backend is running.')
+        }
       }
     })
 
@@ -202,6 +221,7 @@ export default function VoiceInterface({ sessionId, firstQuestion, totalQuestion
 
   // Start recording
   const startRecording = useCallback(async () => {
+    const connected = connectionState === 'connected'
     if (isRecording || isProcessing || !connected) return
 
     try {
@@ -241,7 +261,7 @@ export default function VoiceInterface({ sessionId, firstQuestion, totalQuestion
       console.error('Failed to start recording:', e)
       setError('Microphone access denied. Please allow microphone access.')
     }
-  }, [isRecording, isProcessing, connected])
+  }, [isRecording, isProcessing, connectionState])
 
   // Stop recording
   const stopRecording = useCallback(() => {
@@ -254,6 +274,7 @@ export default function VoiceInterface({ sessionId, firstQuestion, totalQuestion
   // Handle text submit (for text_voice mode)
   function handleTextSubmit() {
     const answer = input.trim()
+    const connected = connectionState === 'connected'
     if (!answer || isProcessing || !connected) return
 
     setInput('')
@@ -270,6 +291,15 @@ export default function VoiceInterface({ sessionId, firstQuestion, totalQuestion
     }
   }
 
+  // Manual reconnect handler
+  function handleReconnect() {
+    setError(null)
+    wsRef.current?.reconnect()
+  }
+
+  const connected = connectionState === 'connected'
+  const canInteract = connected && !isProcessing && !isPlaying
+
   return (
     <div className="flex flex-col h-[calc(100vh-8rem)] max-w-2xl mx-auto">
       {/* Progress bar */}
@@ -278,9 +308,28 @@ export default function VoiceInterface({ sessionId, firstQuestion, totalQuestion
       </div>
 
       {/* Connection status */}
-      {!connected && (
-        <div className="mb-2 px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-xs text-amber-700 dark:text-amber-400">
-          Connecting to voice server...
+      {connectionState !== 'connected' && (
+        <div className={`mb-2 px-3 py-2 rounded-lg border text-xs flex items-center justify-between ${
+          connectionState === 'connecting'
+            ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-400'
+            : connectionState === 'reconnecting'
+            ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-400'
+            : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400'
+        }`}>
+          <span>
+            {connectionState === 'connecting' && '🔌 Connecting to voice server...'}
+            {connectionState === 'reconnecting' && `🔄 Reconnecting (attempt ${reconnectAttempts}/5)...`}
+            {connectionState === 'failed' && '❌ Connection failed'}
+            {connectionState === 'disconnected' && '⚠️ Disconnected from server'}
+          </span>
+          {(connectionState === 'failed' || connectionState === 'disconnected') && (
+            <button
+              onClick={handleReconnect}
+              className="ml-2 px-2 py-1 rounded bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 font-semibold transition-colors"
+            >
+              Retry
+            </button>
+          )}
         </div>
       )}
 
@@ -370,10 +419,10 @@ export default function VoiceInterface({ sessionId, firstQuestion, totalQuestion
               isRecording={isRecording}
               onStart={startRecording}
               onStop={stopRecording}
-              disabled={isProcessing || isPlaying || !connected}
+              disabled={!canInteract}
             />
             <span className="text-xs text-gray-500 dark:text-gray-400">
-              {isRecording ? 'Release to send' : 'Hold to speak'}
+              {isRecording ? 'Release to send' : connected ? 'Hold to speak' : 'Connecting...'}
             </span>
           </div>
         )}
@@ -385,14 +434,14 @@ export default function VoiceInterface({ sessionId, firstQuestion, totalQuestion
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              disabled={isProcessing || isPlaying}
+              disabled={!canInteract}
               rows={2}
-              placeholder="Type your answer... (Enter to send)"
+              placeholder={connected ? "Type your answer... (Enter to send)" : "Connecting..."}
               className="flex-1 resize-none px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 text-sm placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-cyan-500 disabled:opacity-50 transition-colors"
             />
             <button
               onClick={handleTextSubmit}
-              disabled={isProcessing || isPlaying || !input.trim()}
+              disabled={!canInteract || !input.trim()}
               className="px-5 py-3 rounded-xl bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold transition-colors self-end"
             >
               Send
