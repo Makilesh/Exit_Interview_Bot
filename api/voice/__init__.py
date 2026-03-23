@@ -60,9 +60,20 @@ async def _send_json(websocket: WebSocket, data: dict) -> None:
     await websocket.send_text(json.dumps(data))
 
 
-async def _send_error(websocket: WebSocket, message: str) -> None:
-    """Send error message to client."""
-    await _send_json(websocket, {"type": "error", "message": message})
+async def _send_error(websocket: WebSocket, message: str, fatal: bool = False) -> None:
+    """
+    Send error message to client.
+
+    Args:
+        websocket: WebSocket connection
+        message: Error message text
+        fatal: If True, indicates a permanent error that should not trigger reconnection
+    """
+    await _send_json(websocket, {
+        "type": "error",
+        "message": message,
+        "fatal": fatal  # Frontend will not attempt reconnection for fatal errors
+    })
 
 
 async def _send_question(
@@ -138,8 +149,9 @@ async def voice_interview(
         await _send_error(
             websocket,
             "Speech-to-text is not available. "
-            "Run: pip install faster-whisper  (requires ffmpeg on PATH). "
+            "Ensure ffmpeg is installed and on PATH, then restart the backend server. "
             "Try 'Text → Voice' mode instead.",
+            fatal=True  # This is a configuration error - don't retry
         )
         await websocket.close(code=1008)
         return
@@ -356,6 +368,19 @@ async def voice_interview(
                     summary_dict = summary.model_dump()
                 except Exception as e:
                     logger.error(f"Summarizer failed: {e}")
+                    # Provide a basic fallback summary
+                    from storage.schema import InterviewSummary
+                    fallback_summary = InterviewSummary(
+                        primary_exit_reason="Interview completed - summary generation temporarily unavailable",
+                        sentiment="neutral",
+                        confidence_score=0.5,
+                        top_positives=[],
+                        improvement_areas=[],
+                        flag_for_hr=live.hr_flagged,
+                        flag_reason=live.hr_flag_reason if live.hr_flagged else None,
+                    )
+                    live.session.summary = fallback_summary
+                    summary_dict = fallback_summary.model_dump()
 
                 # Persist
                 _store.save(live.session)
@@ -389,10 +414,21 @@ async def voice_interview(
 
     except WebSocketDisconnect:
         logger.info(f"Voice WebSocket disconnected: session={session_id}")
-    except Exception as e:
-        logger.error(f"Voice WebSocket error: {e}")
+    except ValueError as e:
+        # ValueError typically means ffmpeg/configuration issue - fatal error
+        error_msg = str(e)
+        logger.error(f"Voice WebSocket fatal error: {error_msg}")
         try:
-            await _send_error(websocket, str(e))
+            await _send_error(websocket, error_msg, fatal=True)
+            await websocket.close(code=1011)  # 1011 = Internal Error (fatal)
+        except:
+            pass
+    except Exception as e:
+        # Other exceptions might be transient - non-fatal
+        error_msg = str(e)
+        logger.error(f"Voice WebSocket error: {error_msg}")
+        try:
+            await _send_error(websocket, error_msg, fatal=False)
         except:
             pass
     finally:

@@ -69,6 +69,7 @@ export function createVoiceSocket(sessionId, mode, handlers) {
   let reconnectAttempts = 0
   let manualClose = false
   let hasReceivedFirstMessage = false
+  let hasEverConnected = false  // Track if we've ever successfully connected
 
   const MAX_RECONNECT_ATTEMPTS = 5
   const RECONNECT_DELAY_MS = 2000
@@ -127,6 +128,7 @@ export function createVoiceSocket(sessionId, mode, handlers) {
 
     ws.onopen = () => {
       clearTimeout(connectionTimeout)
+      hasEverConnected = true
       reconnectAttempts = 0
       updateState('connected')
       console.log('[Voice WS] Connected successfully')
@@ -162,7 +164,16 @@ export function createVoiceSocket(sessionId, mode, handlers) {
             handlers.onCrisis?.(msg)
             break
           case 'error':
-            handlers.onError?.(new Error(msg.message))
+            // Check if this is a fatal error (configuration issue, don't retry)
+            if (msg.fatal) {
+              console.error('[Voice WS] Fatal error received:', msg.message)
+              manualClose = true  // Prevent reconnection attempts
+              updateState('failed')
+              handlers.onError?.(new Error(msg.message), true)  // true = fatal
+              ws?.close()
+            } else {
+              handlers.onError?.(new Error(msg.message), false)
+            }
             break
           default:
             console.warn('[Voice WS] Unknown message type:', msg.type)
@@ -190,18 +201,27 @@ export function createVoiceSocket(sessionId, mode, handlers) {
         return
       }
 
-      // Auto-reconnect on unexpected close
+      // If we've never connected successfully, this is initial connection failure
+      // Let the connection timeout handle it - don't trigger reconnection logic yet
+      if (!hasEverConnected) {
+        console.log('[Voice WS] Initial connection failed, waiting for timeout...')
+        // Keep state as 'connecting' and let timeout handle the failure
+        return
+      }
+
+      // We had a successful connection before - now it's dropped unexpectedly
+      // Trigger auto-reconnect
       if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
         reconnectAttempts++
         updateState('reconnecting')
-        console.log(`[Voice WS] Reconnecting (attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`)
+        console.log(`[Voice WS] Connection lost. Reconnecting (attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`)
 
         reconnectTimer = setTimeout(() => {
           connect()
         }, RECONNECT_DELAY_MS)
       } else {
         updateState('failed')
-        handlers.onError?.(new Error(`Unable to connect after ${MAX_RECONNECT_ATTEMPTS} attempts. Please refresh the page.`))
+        handlers.onError?.(new Error(`Unable to reconnect after ${MAX_RECONNECT_ATTEMPTS} attempts. Please refresh the page.`))
         handlers.onClose?.(event)
       }
     }

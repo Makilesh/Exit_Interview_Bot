@@ -69,6 +69,7 @@ export default function VoiceInterface({ sessionId, firstQuestion, totalQuestion
   const [isPlaying, setIsPlaying] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
   const [error, setError] = useState(null)
+  const [isFatalError, setIsFatalError] = useState(false)  // Track if error is fatal
   const [questionNumber, setQuestionNumber] = useState(1)
   const [connectionState, setConnectionState] = useState('connecting') // 'connecting' | 'connected' | 'reconnecting' | 'disconnected' | 'failed'
   const [reconnectAttempts, setReconnectAttempts] = useState(0)
@@ -135,9 +136,13 @@ export default function VoiceInterface({ sessionId, firstQuestion, totalQuestion
         setTimeout(() => onComplete(null, [], true), 1500)
       },
 
-      onError: (err) => {
+      onError: (err, fatal = false) => {
         setError(err.message)
         setIsProcessing(false)
+        if (fatal) {
+          setIsFatalError(true)
+          setConnectionState('failed')  // Ensure state is failed for fatal errors
+        }
       },
 
       onTranscript: (msg) => {
@@ -163,20 +168,30 @@ export default function VoiceInterface({ sessionId, firstQuestion, totalQuestion
         setConnectionState(state)
         setReconnectAttempts(attempts)
 
-        if (state === 'reconnecting') {
-          setError(`Connection lost. Reconnecting (attempt ${attempts}/5)...`)
-        } else if (state === 'failed') {
-          setError('Connection failed after multiple attempts. Please check your internet connection.')
+        // Only set error messages for 'failed' state - not during normal connecting/reconnecting
+        if (state === 'failed') {
+          setError('Connection failed. Please check that the backend server is running on port 8000.')
         } else if (state === 'connected' && attempts > 0) {
-          setError(null) // Clear reconnection error on success
+          // Successfully reconnected - clear any errors
+          setError(null)
+        } else if (state === 'reconnecting') {
+          // Connection was lost - check if there are any pending transcriptions
+          setMessages(prev => {
+            const hasPendingTranscription = prev.some(m => m.transcribing)
+            if (hasPendingTranscription) {
+              // Remove the transcribing placeholder since it won't complete
+              return prev.filter(m => !m.transcribing)
+            }
+            return prev
+          })
         }
       },
 
       onClose: (event) => {
         console.log('[VoiceInterface] WebSocket closed')
-        // Only show error if we haven't received any messages yet (initial connection failure)
-        if (messages.length === 0) {
-          setError('Unable to connect to voice server. Please verify the backend is running.')
+        // onClose is only called after exhausting all retries - show final error
+        if (connectionState === 'failed') {
+          setError('Unable to maintain connection. Please refresh the page and try again.')
         }
       }
     })
@@ -308,28 +323,35 @@ export default function VoiceInterface({ sessionId, firstQuestion, totalQuestion
       </div>
 
       {/* Connection status */}
-      {connectionState !== 'connected' && (
-        <div className={`mb-2 px-3 py-2 rounded-lg border text-xs flex items-center justify-between ${
+      {(connectionState === 'connecting' || connectionState === 'reconnecting') && (
+        <div className={`mb-2 px-3 py-2 rounded-lg border text-xs ${
           connectionState === 'connecting'
             ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-400'
-            : connectionState === 'reconnecting'
-            ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-400'
-            : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400'
+            : 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-400'
         }`}>
-          <span>
-            {connectionState === 'connecting' && '🔌 Connecting to voice server...'}
-            {connectionState === 'reconnecting' && `🔄 Reconnecting (attempt ${reconnectAttempts}/5)...`}
-            {connectionState === 'failed' && '❌ Connection failed'}
-            {connectionState === 'disconnected' && '⚠️ Disconnected from server'}
-          </span>
-          {(connectionState === 'failed' || connectionState === 'disconnected') && (
-            <button
-              onClick={handleReconnect}
-              className="ml-2 px-2 py-1 rounded bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 font-semibold transition-colors"
-            >
-              Retry
-            </button>
+          <div className="flex items-center justify-between">
+            <span>
+              {connectionState === 'connecting' && '🔌 Connecting to voice server...'}
+              {connectionState === 'reconnecting' && `🔄 Reconnecting... (attempt ${reconnectAttempts}/5)`}
+            </span>
+          </div>
+          {connectionState === 'reconnecting' && (
+            <div className="mt-1 text-[10px] opacity-75">
+              If your message was being transcribed, you may need to re-record it.
+            </div>
           )}
+        </div>
+      )}
+
+      {connectionState === 'failed' && (
+        <div className="mb-2 px-3 py-2 rounded-lg border text-xs flex items-center justify-between bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400">
+          <span>❌ Connection failed</span>
+          <button
+            onClick={handleReconnect}
+            className="ml-2 px-2 py-1 rounded bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 font-semibold transition-colors"
+          >
+            Retry
+          </button>
         </div>
       )}
 
@@ -389,13 +411,13 @@ export default function VoiceInterface({ sessionId, firstQuestion, totalQuestion
       </div>
 
       {/* Error banner */}
-      {error && (
+      {error && connectionState === 'failed' && (
         <div className="mt-2 px-3 py-2 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-xs text-red-700 dark:text-red-400">
           <span>{error}</span>
-          {messages.length === 0 && onCancel && (
+          {isFatalError && onCancel && (
             <button
               onClick={onCancel}
-              className="ml-3 underline font-semibold hover:no-underline"
+              className="ml-3 px-2 py-1 rounded bg-cyan-600 hover:bg-cyan-500 text-white font-semibold transition-colors"
             >
               Change mode
             </button>
