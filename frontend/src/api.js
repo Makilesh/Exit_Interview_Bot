@@ -114,7 +114,8 @@ export function createVoiceSocket(sessionId, mode, handlers) {
         console.error('[Voice WS] Connection timeout')
         ws?.close()
         updateState('failed')
-        handlers.onError?.(new Error('Connection timeout - please check if the backend server is running on port 8000'))
+        const portHint = typeof window !== 'undefined' && window.location.hostname === 'localhost' ? ' on port 8000' : ''
+        handlers.onError?.(new Error(`Connection timeout - please check if the backend server is running${portHint}`))
       }
     }, CONNECTION_TIMEOUT_MS)
 

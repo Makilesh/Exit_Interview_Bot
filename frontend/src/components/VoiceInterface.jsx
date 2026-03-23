@@ -169,7 +169,8 @@ export default function VoiceInterface({ sessionId, firstQuestion, totalQuestion
         setReconnectAttempts(attempts)
 
         // Only set error messages for 'failed' state - not during normal connecting/reconnecting
-        if (state === 'failed') {
+        // Don't overwrite existing specific errors with generic message
+        if (state === 'failed' && !error) {
           setError('Connection failed. Please check that the backend server is running on port 8000.')
         } else if (state === 'connected' && attempts > 0) {
           // Successfully reconnected - clear any errors
@@ -239,6 +240,7 @@ export default function VoiceInterface({ sessionId, firstQuestion, totalQuestion
     const connected = connectionState === 'connected'
     if (isRecording || isProcessing || !connected) return
 
+    setError(null) // Clear previous errors before attempting to record
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
 
@@ -411,7 +413,7 @@ export default function VoiceInterface({ sessionId, firstQuestion, totalQuestion
       </div>
 
       {/* Error banner */}
-      {error && connectionState === 'failed' && (
+      {error && (
         <div className="mt-2 px-3 py-2 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-xs text-red-700 dark:text-red-400">
           <span>{error}</span>
           {isFatalError && onCancel && (
