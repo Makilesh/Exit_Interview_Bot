@@ -70,8 +70,10 @@ export function createVoiceSocket(sessionId, mode, handlers) {
   let manualClose = false
   let hasReceivedFirstMessage = false
   let hasEverConnected = false  // Track if we've ever successfully connected
+  let initialFailureHandled = false
 
   const MAX_RECONNECT_ATTEMPTS = 5
+  const MAX_INITIAL_CONNECT_ATTEMPTS = 12
   const RECONNECT_DELAY_MS = 2000
   const CONNECTION_TIMEOUT_MS = 10000
   const HEARTBEAT_INTERVAL_MS = 30000
@@ -83,7 +85,12 @@ export function createVoiceSocket(sessionId, mode, handlers) {
     if (connectionState !== newState) {
       connectionState = newState
       console.log(`[Voice WS] State: ${newState}`)
-      handlers.onStateChange?.({ state: newState, attempts: reconnectAttempts, hasEverConnected })
+      handlers.onStateChange?.({
+        state: newState,
+        attempts: reconnectAttempts,
+        hasEverConnected,
+        maxAttempts: hasEverConnected ? MAX_RECONNECT_ATTEMPTS : MAX_INITIAL_CONNECT_ATTEMPTS,
+      })
     }
   }
 
@@ -105,20 +112,42 @@ export function createVoiceSocket(sessionId, mode, handlers) {
     }, HEARTBEAT_INTERVAL_MS)
   }
 
+  const failConnection = (errorMessage) => {
+    updateState('failed')
+    handlers.onError?.(new Error(errorMessage))
+  }
+
+  const scheduleInitialReconnect = () => {
+    if (initialFailureHandled || manualClose || hasEverConnected) {
+      return
+    }
+    initialFailureHandled = true
+
+    if (reconnectAttempts < MAX_INITIAL_CONNECT_ATTEMPTS) {
+      reconnectAttempts++
+      updateState('reconnecting')
+      reconnectTimer = setTimeout(() => {
+        connect()
+      }, RECONNECT_DELAY_MS)
+      return
+    }
+
+    const portHint = typeof window !== 'undefined' && window.location.hostname === 'localhost' ? ' on port 8000' : ''
+    failConnection(
+      `Unable to connect to voice server after ${MAX_INITIAL_CONNECT_ATTEMPTS} attempts. Please check if the backend server is running${portHint} and click Retry.`
+    )
+  }
+
   const connect = () => {
     clearTimers()
+    initialFailureHandled = false
 
     // Set connection timeout
     connectionTimeout = setTimeout(() => {
       if (ws?.readyState !== WebSocket.OPEN && !hasReceivedFirstMessage) {
         console.error('[Voice WS] Connection timeout')
+        scheduleInitialReconnect()
         ws?.close()
-
-        // Call onError BEFORE updateState to ensure error is set when state change callback fires
-        const portHint = typeof window !== 'undefined' && window.location.hostname === 'localhost' ? ' on port 8000' : ''
-        handlers.onError?.(new Error(`Connection timeout - please check if the backend server is running${portHint}`))
-
-        updateState('failed')
       }
     }, CONNECTION_TIMEOUT_MS)
 
@@ -134,6 +163,7 @@ export function createVoiceSocket(sessionId, mode, handlers) {
       clearTimeout(connectionTimeout)
       hasEverConnected = true
       reconnectAttempts = 0
+      initialFailureHandled = false
       updateState('connected')
       console.log('[Voice WS] Connected successfully')
       handlers.onConnect?.()
@@ -203,11 +233,10 @@ export function createVoiceSocket(sessionId, mode, handlers) {
     ws.onclose = (event) => {
       console.log(`[Voice WS] Closed: code=${event.code}, clean=${event.wasClean}, reason="${event.reason}"`)
 
-      // If we've never connected successfully, this is initial connection failure
-      // Let the connectionTimeout be the sole authority on transitioning to 'failed'
-      // Do NOT clear timers or call updateState here
+      // If we've never connected successfully, treat this as startup/backoff phase
       if (!hasEverConnected && !manualClose) {
-        console.log('[Voice WS] Initial connection failed, waiting for timeout...')
+        clearTimeout(connectionTimeout)
+        scheduleInitialReconnect()
         return
       }
 
@@ -230,8 +259,7 @@ export function createVoiceSocket(sessionId, mode, handlers) {
           connect()
         }, RECONNECT_DELAY_MS)
       } else {
-        updateState('failed')
-        handlers.onError?.(new Error(`Unable to reconnect after ${MAX_RECONNECT_ATTEMPTS} attempts. Please refresh the page.`))
+        failConnection(`Unable to reconnect after ${MAX_RECONNECT_ATTEMPTS} attempts. Please refresh the page.`)
         handlers.onClose?.(event)
       }
     }

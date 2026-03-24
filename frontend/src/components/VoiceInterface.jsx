@@ -69,12 +69,14 @@ export default function VoiceInterface({ sessionId, firstQuestion, totalQuestion
   const [questionNumber, setQuestionNumber] = useState(1)
   const [connectionState, setConnectionState] = useState('connecting') // 'connecting' | 'connected' | 'reconnecting' | 'disconnected' | 'failed'
   const [reconnectAttempts, setReconnectAttempts] = useState(0)
+  const [maxReconnectAttempts, setMaxReconnectAttempts] = useState(5)
 
   const bottomRef = useRef(null)
   const wsRef = useRef(null)
   const mediaRecorderRef = useRef(null)
   const audioChunksRef = useRef([])
   const audioContextRef = useRef(null)
+  const connectionStateRef = useRef('connecting')
 
   const useSTT = mode === 'voice_text' || mode === 'voice_voice'
   const useTTS = mode === 'text_voice' || mode === 'voice_voice'
@@ -83,6 +85,10 @@ export default function VoiceInterface({ sessionId, firstQuestion, totalQuestion
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, isProcessing])
+
+  useEffect(() => {
+    connectionStateRef.current = connectionState
+  }, [connectionState])
 
   // Initialize WebSocket connection
   useEffect(() => {
@@ -160,18 +166,14 @@ export default function VoiceInterface({ sessionId, firstQuestion, totalQuestion
         setError(null) // Clear errors on successful connection
       },
 
-      onStateChange: ({ state, attempts, hasEverConnected }) => {
+      onStateChange: ({ state, attempts, hasEverConnected, maxAttempts }) => {
         setConnectionState(state)
         setReconnectAttempts(attempts)
+        if (typeof maxAttempts === 'number') {
+          setMaxReconnectAttempts(maxAttempts)
+        }
 
-        // Only set error messages for 'failed' state - not during normal connecting/reconnecting
-        // Don't overwrite existing specific errors with generic message
-        // Defensive guard: only show generic error if this was a reconnection failure
-        // (attempts > 0) or we had a prior connection (hasEverConnected).
-        // For first-connection failures, the timeout handler sets the specific error.
-        if (state === 'failed' && !error && (attempts > 0 || hasEverConnected)) {
-          setError('Connection failed. Please check that the backend server is running on port 8000.')
-        } else if (state === 'connected' && attempts > 0) {
+        if (state === 'connected' && attempts > 0) {
           // Successfully reconnected - clear any errors
           setError(null)
         } else if (state === 'reconnecting') {
@@ -190,7 +192,7 @@ export default function VoiceInterface({ sessionId, firstQuestion, totalQuestion
       onClose: (event) => {
         console.log('[VoiceInterface] WebSocket closed')
         // onClose is only called after exhausting all retries - show final error
-        if (connectionState === 'failed') {
+        if (connectionStateRef.current === 'failed') {
           setError('Unable to maintain connection. Please refresh the page and try again.')
         }
       }
@@ -355,7 +357,7 @@ export default function VoiceInterface({ sessionId, firstQuestion, totalQuestion
           <div className="flex items-center justify-between">
             <span>
               {connectionState === 'connecting' && '🔌 Connecting to voice server...'}
-              {connectionState === 'reconnecting' && `🔄 Reconnecting... (attempt ${reconnectAttempts}/5)`}
+              {connectionState === 'reconnecting' && `🔄 Reconnecting... (attempt ${reconnectAttempts}/${maxReconnectAttempts})`}
             </span>
           </div>
           {connectionState === 'reconnecting' && (
