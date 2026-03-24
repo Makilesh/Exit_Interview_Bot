@@ -113,9 +113,12 @@ export function createVoiceSocket(sessionId, mode, handlers) {
       if (ws?.readyState !== WebSocket.OPEN && !hasReceivedFirstMessage) {
         console.error('[Voice WS] Connection timeout')
         ws?.close()
-        updateState('failed')
+
+        // Call onError BEFORE updateState to ensure error is set when state change callback fires
         const portHint = typeof window !== 'undefined' && window.location.hostname === 'localhost' ? ' on port 8000' : ''
         handlers.onError?.(new Error(`Connection timeout - please check if the backend server is running${portHint}`))
+
+        updateState('failed')
       }
     }, CONNECTION_TIMEOUT_MS)
 
@@ -186,10 +189,15 @@ export function createVoiceSocket(sessionId, mode, handlers) {
 
     ws.onerror = (event) => {
       console.error('[Voice WS] Error:', event)
-      const errorMsg = connectionState === 'connecting'
-        ? 'Failed to connect - verify backend is running on port 8000'
-        : 'Connection error occurred'
-      handlers.onError?.(new Error(errorMsg))
+
+      // Don't show errors during initial connection phase
+      // Let the connection timeout handler deal with actual connection failures
+      // Only show errors for established connections that break
+      if (hasEverConnected || hasReceivedFirstMessage) {
+        handlers.onError?.(new Error('Connection error occurred'))
+      } else {
+        console.log('[Voice WS] Error during initial connection, waiting for timeout...')
+      }
     }
 
     ws.onclose = (event) => {
