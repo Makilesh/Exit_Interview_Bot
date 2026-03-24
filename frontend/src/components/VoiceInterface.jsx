@@ -16,27 +16,23 @@ function Spinner() {
   )
 }
 
-function MicButton({ isRecording, onStart, onStop, disabled }) {
+function MicButton({ isRecording, onToggle, disabled }) {
   return (
     <button
-      onMouseDown={onStart}
-      onMouseUp={onStop}
-      onMouseLeave={onStop}
-      onTouchStart={onStart}
-      onTouchEnd={onStop}
+      onClick={onToggle}
       disabled={disabled}
       className={`
         w-16 h-16 rounded-full flex items-center justify-center text-2xl
         transition-all duration-150 select-none
         ${isRecording
-          ? 'bg-red-500 scale-110 shadow-lg shadow-red-500/30'
+          ? 'bg-red-500 scale-110 shadow-lg shadow-red-500/30 animate-pulse'
           : 'bg-cyan-600 hover:bg-cyan-500 hover:scale-105'
         }
         ${disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}
         text-white
       `}
     >
-      {isRecording ? '🎤' : '🎙️'}
+      {isRecording ? '⏹️' : '🎙️'}
     </button>
   )
 }
@@ -235,11 +231,21 @@ export default function VoiceInterface({ sessionId, firstQuestion, totalQuestion
     }
   }, [])
 
-  // Start recording
-  const startRecording = useCallback(async () => {
+  // Toggle recording (tap to start, tap to stop)
+  const toggleRecording = useCallback(async () => {
     const connected = connectionState === 'connected'
-    if (isRecording || isProcessing || !connected) return
+    if (isProcessing || !connected) return
 
+    // If currently recording, stop it
+    if (isRecording) {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+        mediaRecorderRef.current.stop()
+        setIsRecording(false)
+      }
+      return
+    }
+
+    // Start new recording
     setError(null) // Clear previous errors before attempting to record
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
@@ -274,7 +280,7 @@ export default function VoiceInterface({ sessionId, firstQuestion, totalQuestion
 
           if (audioBlob.size < 100) {
             console.warn(`[VoiceInterface] Audio blob suspiciously small (${audioBlob.size} bytes), may be corrupted`)
-            setError('Recording failed. Please hold the button longer and try again.')
+            setError('Recording failed. Please record for at least 1 second.')
             // Stop tracks after validation failure
             stream.getTracks().forEach(track => track.stop())
             return
@@ -299,14 +305,6 @@ export default function VoiceInterface({ sessionId, firstQuestion, totalQuestion
       setError('Microphone access denied. Please allow microphone access.')
     }
   }, [isRecording, isProcessing, connectionState])
-
-  // Stop recording
-  const stopRecording = useCallback(() => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop()
-      setIsRecording(false)
-    }
-  }, [isRecording])
 
   // Handle text submit (for text_voice mode)
   function handleTextSubmit() {
@@ -461,12 +459,11 @@ export default function VoiceInterface({ sessionId, firstQuestion, totalQuestion
           <div className="flex flex-col items-center gap-2">
             <MicButton
               isRecording={isRecording}
-              onStart={startRecording}
-              onStop={stopRecording}
+              onToggle={toggleRecording}
               disabled={!canInteract}
             />
             <span className="text-xs text-gray-500 dark:text-gray-400">
-              {isRecording ? 'Release to send' : connected ? 'Hold to speak' : 'Connecting...'}
+              {isRecording ? 'Click to stop recording' : connected ? 'Click to start recording' : 'Connecting...'}
             </span>
           </div>
         )}
