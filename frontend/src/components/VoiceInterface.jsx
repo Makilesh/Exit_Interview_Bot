@@ -261,13 +261,28 @@ export default function VoiceInterface({ sessionId, firstQuestion, totalQuestion
         // Stop all tracks
         stream.getTracks().forEach(track => track.stop())
 
-        // Create blob and send
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
+        // Wait for MediaRecorder to finish flushing data
+        // Without this delay, the blob may be incomplete/corrupted
+        setTimeout(() => {
+          // Create blob and send
+          const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
 
-        if (audioBlob.size > 0) {
+          if (audioBlob.size === 0) {
+            console.warn('[VoiceInterface] Audio blob is empty, not sending')
+            setError('Recording was too short or empty. Please try again.')
+            return
+          }
+
+          if (audioBlob.size < 100) {
+            console.warn(`[VoiceInterface] Audio blob suspiciously small (${audioBlob.size} bytes), may be corrupted`)
+            setError('Recording failed. Please hold the button longer and try again.')
+            return
+          }
+
+          console.log(`[VoiceInterface] Sending audio blob: ${audioBlob.size} bytes`)
           setMessages(prev => [...prev, { role: 'user', text: '', isVoice: true, transcribing: true }])
           wsRef.current?.sendAudio(audioBlob)
-        }
+        }, 100) // 100ms delay to ensure MediaRecorder has flushed all data
       }
 
       mediaRecorderRef.current = mediaRecorder

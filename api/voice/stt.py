@@ -147,26 +147,37 @@ def _convert_to_wav(audio_bytes: bytes) -> bytes:
     try:
         from pydub import AudioSegment
 
+        logger.debug(f"Converting {len(audio_bytes)} bytes of audio to WAV")
+
         try:
             audio = AudioSegment.from_file(io.BytesIO(audio_bytes), format="webm")
-        except Exception:
+        except Exception as e:
+            logger.debug(f"WebM parsing failed ({e}), trying auto-detect")
             audio = AudioSegment.from_file(io.BytesIO(audio_bytes))
 
         audio = audio.set_channels(1).set_frame_rate(16000)
         buf = io.BytesIO()
         audio.export(buf, format="wav")
         buf.seek(0)
-        return buf.read()
+        wav_bytes = buf.read()
+        logger.debug(f"Conversion successful: {len(wav_bytes)} bytes WAV")
+        return wav_bytes
 
     except Exception as e:
         err = str(e).lower()
-        if any(k in err for k in ("ffmpeg", "ffprobe", "couldn't find", "not installed")):
+        # Only report "ffmpeg not on PATH" if it's actually a missing ffmpeg issue
+        # Check for specific error patterns that indicate ffmpeg is unavailable
+        if any(k in err for k in ("ffmpeg was not found", "ffmpeg: not found", "couldn't find ffmpeg",
+                                   "ffprobe was not found", "ffprobe: not found", "couldn't find ffprobe",
+                                   "filenotfounderror", "no such file")):
             raise ValueError(
                 "ffmpeg is not on PATH. "
                 "CLOSE this terminal completely (X button), "
                 "open a NEW terminal, and restart the backend server."
             )
-        raise ValueError(f"Failed to convert audio: {e}")
+        # For other errors mentioning ffmpeg (e.g., codec issues, format problems),
+        # report the actual error instead of claiming ffmpeg is missing
+        raise ValueError(f"Audio conversion failed: {e}")
 
 
 # ── Public API ────────────────────────────────────────────────────────────────

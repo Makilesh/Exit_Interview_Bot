@@ -191,9 +191,22 @@ async def voice_interview(
                     if msg_type == "audio":
                         # Base64-encoded audio
                         audio_bytes = base64.b64decode(data.get("data", ""))
-                        answer = await asyncio.get_running_loop().run_in_executor(
-                            None, stt_engine.transcribe, audio_bytes, True
-                        )
+                        try:
+                            answer = await asyncio.get_running_loop().run_in_executor(
+                                None, stt_engine.transcribe, audio_bytes, True
+                            )
+                        except ValueError as e:
+                            # Transcription failed - send non-fatal error and continue
+                            error_msg = str(e)
+                            logger.error(f"Transcription error: {error_msg}")
+                            await _send_error(websocket, f"Transcription failed: {error_msg}", fatal=False)
+                            continue
+                        except Exception as e:
+                            # Unexpected error - send non-fatal error and continue
+                            error_msg = f"Transcription error: {str(e)}"
+                            logger.error(error_msg)
+                            await _send_error(websocket, error_msg, fatal=False)
+                            continue
                     elif msg_type == "text":
                         # Direct text input (for text_voice mode)
                         answer = data.get("data", "").strip()
@@ -212,9 +225,22 @@ async def voice_interview(
                     continue
 
                 audio_bytes = message["bytes"]
-                answer = await asyncio.get_running_loop().run_in_executor(
-                    None, stt_engine.transcribe, audio_bytes, True
-                )
+                try:
+                    answer = await asyncio.get_running_loop().run_in_executor(
+                        None, stt_engine.transcribe, audio_bytes, True
+                    )
+                except ValueError as e:
+                    # Transcription failed - send non-fatal error and continue
+                    error_msg = str(e)
+                    logger.error(f"Transcription error: {error_msg}")
+                    await _send_error(websocket, f"Transcription failed: {error_msg}", fatal=False)
+                    continue
+                except Exception as e:
+                    # Unexpected error - send non-fatal error and continue
+                    error_msg = f"Transcription error: {str(e)}"
+                    logger.error(error_msg)
+                    await _send_error(websocket, error_msg, fatal=False)
+                    continue
 
             else:
                 continue  # Skip unexpected message types
