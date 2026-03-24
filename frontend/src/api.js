@@ -83,7 +83,7 @@ export function createVoiceSocket(sessionId, mode, handlers) {
     if (connectionState !== newState) {
       connectionState = newState
       console.log(`[Voice WS] State: ${newState}`)
-      handlers.onStateChange?.({ state: newState, attempts: reconnectAttempts })
+      handlers.onStateChange?.({ state: newState, attempts: reconnectAttempts, hasEverConnected })
     }
   }
 
@@ -201,20 +201,21 @@ export function createVoiceSocket(sessionId, mode, handlers) {
     }
 
     ws.onclose = (event) => {
-      clearTimers()
       console.log(`[Voice WS] Closed: code=${event.code}, clean=${event.wasClean}, reason="${event.reason}"`)
+
+      // If we've never connected successfully, this is initial connection failure
+      // Let the connectionTimeout be the sole authority on transitioning to 'failed'
+      // Do NOT clear timers or call updateState here
+      if (!hasEverConnected && !manualClose) {
+        console.log('[Voice WS] Initial connection failed, waiting for timeout...')
+        return
+      }
+
+      clearTimers()
 
       if (manualClose) {
         updateState('disconnected')
         handlers.onClose?.(event)
-        return
-      }
-
-      // If we've never connected successfully, this is initial connection failure
-      // Let the connection timeout handle it - don't trigger reconnection logic yet
-      if (!hasEverConnected) {
-        console.log('[Voice WS] Initial connection failed, waiting for timeout...')
-        // Keep state as 'connecting' and let timeout handle the failure
         return
       }
 

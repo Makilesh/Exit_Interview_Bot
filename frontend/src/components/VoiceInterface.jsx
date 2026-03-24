@@ -160,13 +160,16 @@ export default function VoiceInterface({ sessionId, firstQuestion, totalQuestion
         setError(null) // Clear errors on successful connection
       },
 
-      onStateChange: ({ state, attempts }) => {
+      onStateChange: ({ state, attempts, hasEverConnected }) => {
         setConnectionState(state)
         setReconnectAttempts(attempts)
 
         // Only set error messages for 'failed' state - not during normal connecting/reconnecting
         // Don't overwrite existing specific errors with generic message
-        if (state === 'failed' && !error) {
+        // Defensive guard: only show generic error if this was a reconnection failure
+        // (attempts > 0) or we had a prior connection (hasEverConnected).
+        // For first-connection failures, the timeout handler sets the specific error.
+        if (state === 'failed' && !error && (attempts > 0 || hasEverConnected)) {
           setError('Connection failed. Please check that the backend server is running on port 8000.')
         } else if (state === 'connected' && attempts > 0) {
           // Successfully reconnected - clear any errors
