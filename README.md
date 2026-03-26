@@ -372,7 +372,7 @@ api/
     ├── tts.py        ← Text-to-speech (Kokoro / pyttsx3 fallback)
     ├── test_stt.py   ← STT testing utilities
     ├── test_tts.py   ← TTS testing utilities
-    └── README.md     ← Voice engine detailed documentation
+    └── Voice_README.md     ← Voice engine detailed documentation
 
 frontend/
 ├── package.json      ← Vite + React + Tailwind
@@ -460,4 +460,4 @@ KOKORO_SPEED=1.0             # 0.5–2.0
 - WebSocket message protocol stable ✅
 - Browser MediaRecorder → PCM conversion fixed (ffmpeg required) ✅
 
-See `api/voice/README.md` for detailed message protocol and troubleshooting.
+See `api/voice/Voice_README.md` for detailed message protocol and troubleshooting.
