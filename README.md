@@ -2,6 +2,8 @@
 
 An intelligent, LLM-driven exit interview agent built with Python, LangChain, and OpenAI (with local Ollama fallback). The system conducts structured exit interviews, uses an agentic decision engine to dynamically adapt follow-up questions based on response quality, classifies sentiment and topics in real time, flags HR concerns, and produces a structured session record, a human-readable transcript, and a Markdown summary report.
 
+Available as a **CLI application** (text-only) or **full-stack web interface** with 4 interview modes: text-only, voice-to-text (STT), text-to-voice (TTS), or fully voice-driven (end-to-end).
+
 ---
 
 ## Architecture
@@ -227,14 +229,14 @@ exit-interview-agent/
 pip install -r requirements.txt
 ```
 
-**2. Configure the OpenAI API key:**
+**2. Configure the OpenAI API key (optional — local Ollama fallback available):**
 
 Create a `.env` file in the project root:
 ```env
 OPENAI_API_KEY=sk-your-key-here
 ```
 
-**3. Ollama fallback (optional but recommended for offline use):**
+**3. Ollama fallback (recommended for offline use):**
 
 Install and run [Ollama](https://ollama.ai/) locally, then pull the fallback model:
 ```bash
@@ -246,7 +248,25 @@ Optionally override the Ollama endpoint in `.env`:
 OLLAMA_BASE_URL=http://localhost:11434
 ```
 
+Local fallback verification in this workspace succeeded against `gpt-oss:20b`. If you want to exercise the local path explicitly, you can leave `OPENAI_API_KEY` unset or temporarily clear it before running the app; the shared LLM utility will fall back to Ollama.
+
 When OpenAI is unavailable, the circuit breaker in `utils/llm.py` automatically routes all calls to Ollama after the first two failures.
+
+**4. Voice dependencies (required for web interface voice modes):**
+
+- **STT (Speech-to-Text):** `faster-whisper` is already in `requirements.txt` and tested ✅
+- **TTS (Text-to-Speech):** Kokoro requires `realtimetts[kokoro]`:
+  ```bash
+  pip install "realtimetts[kokoro]"
+  ```
+  Fallback to `pyttsx3` (SAPI5 on Windows) is automatic if Kokoro unavailable.
+
+- **Audio processing:** System `ffmpeg` is required for WebM/Opus → PCM conversion:
+  - **Windows:** `choco install ffmpeg` or download from [ffmpeg.org](https://ffmpeg.org/download.html)
+  - **macOS:** `brew install ffmpeg`
+  - **Linux:** `sudo apt install ffmpeg`
+
+Run `python check_environment.py` to verify all dependencies are ready.
 
 ---
 
@@ -343,22 +363,28 @@ The agent is also available as a full-stack web application — FastAPI backend 
 ```
 api/
 ├── __init__.py
-├── main.py           ← FastAPI app + all routes
+├── main.py           ← FastAPI app + all routes (includes voice WebSocket router)
 ├── models.py         ← Pydantic request/response schemas
 ├── session_store.py  ← In-memory live session registry
 └── voice/
-    └── README.md     ← Voice engine placeholder (coming soon)
+    ├── __init__.py   ← WebSocket router for all voice modes
+    ├── stt.py        ← Speech-to-text (faster-whisper)
+    ├── tts.py        ← Text-to-speech (Kokoro / pyttsx3 fallback)
+    ├── test_stt.py   ← STT testing utilities
+    ├── test_tts.py   ← TTS testing utilities
+    └── README.md     ← Voice engine detailed documentation
 
 frontend/
 ├── package.json      ← Vite + React + Tailwind
 ├── vite.config.js    ← /api proxy → localhost:8000
 └── src/
-    ├── App.jsx        ← 4-view router (select → interview → summary | crisis)
-    ├── api.js         ← All fetch calls centralised
+    ├── App.jsx        ← 4-mode router (select → interview → summary | crisis)
+    ├── api.js         ← All fetch calls centralised (including WebSocket auth)
     └── components/
         ├── ModeSelector.jsx   ← 4-mode landing screen
-        ├── ChatInterface.jsx  ← Chat bubble interview UI
-        ├── ProgressBar.jsx    ← Q1/6 → Q6/6 progress
+        ├── ChatInterface.jsx  ← Chat bubble interface (text mode)
+        ├── VoiceInterface.jsx ← Voice mode handler (handles STT/TTS over WebSocket)
+        ├── ProgressBar.jsx    ← Q1/6 → Q6/6 progress indicator
         ├── SummaryPanel.jsx   ← Full summary + downloads
         └── CrisisPanel.jsx    ← Emergency escalation screen
 ```
@@ -398,12 +424,40 @@ npm run dev
 
 ### Interview modes
 
-| Mode | Status | Description |
-|------|--------|-------------|
-| Text → Text | **Active** | Type questions, type answers |
-| Voice → Text | Soon | Speak answers, read questions |
-| Text → Voice | Soon | Type answers, hear questions spoken |
-| Voice → Voice | Soon | Fully spoken interview |
+| Mode | Status | Engine | Description |
+|------|--------|--------|-------------|
+| Text → Text | **Active** | — | Type questions, type answers |
+| Voice → Text | **Active** | faster-whisper STT | Speak answers, read questions (STT only) |
+| Text → Voice | **Active** | Kokoro TTS | Type answers, hear questions spoken (TTS only) |
+| Voice → Voice | **Active** | faster-whisper + Kokoro | Fully spoken interview (STT + TTS via WebSocket) |
 
-Voice modes are planned for a future release (Whisper STT + Cartesia TTS via WebSocket).
-See `api/voice/README.md` for the planned architecture.
+**Voice Architecture:**
+
+All voice modes operate over WebSocket (`/api/voice/ws/{session_id}?mode={mode}`):
+
+- **STT Engine:** `faster-whisper` (local, no API key)
+  - Model: configurable via `WHISPER_MODEL` env var (default: `base.en`)
+  - Input: browser audio (WebM/Opus) → converted to PCM via ffmpeg
+  - Device: auto-detects CUDA (float16), falls back to CPU (int8)
+  - VAD (Voice Activity Detection): silero-vad with threshold 0.38
+
+- **TTS Engine:** `Kokoro-82M` via RealtimeTTS (local, no API key)
+  - Voice: configurable via `KOKORO_VOICE` env var (default: `af_heart`)
+  - Output: WAV bytes streamed to browser via WebSocket → plays in AudioContext
+  - Fallback: `pyttsx3` (Windows SAPI5) if Kokoro unavailable
+  - Device: auto-detects CUDA
+
+**Configuration (.env):**
+```env
+WHISPER_MODEL=base.en        # tiny.en | small.en | base.en
+KOKORO_VOICE=af_heart        # af_heart | af_bella | af_sarah | am_adam | bm_george | bf_emma
+KOKORO_SPEED=1.0             # 0.5–2.0
+```
+
+**Status Notes:**
+- STT tested and working ✅
+- TTS tested and working ✅
+- WebSocket message protocol stable ✅
+- Browser MediaRecorder → PCM conversion fixed (ffmpeg required) ✅
+
+See `api/voice/README.md` for detailed message protocol and troubleshooting.
